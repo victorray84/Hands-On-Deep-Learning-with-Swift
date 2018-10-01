@@ -139,7 +139,7 @@ extension DigitCanvasView{
         }
         
         context.setStrokeColor(NSColor.white.cgColor)
-        context.setLineWidth(40.0)
+        context.setLineWidth(30.0)
         
         for stroke in self.strokes{
             context.beginPath()

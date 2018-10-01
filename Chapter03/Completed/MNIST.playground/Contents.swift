@@ -340,7 +340,7 @@ let network = Network(
 // Create MPSImage
 let placeholderImageDescriptor = MPSImageDescriptor(
     channelFormat: MPSImageFeatureChannelFormat.unorm8,
-    width: MNIST_NUMBER_OF_CLASSES,
+    width: MNIST_IMAGE_WIDTH,
     height: MNIST_IMAGE_HEIGHT,
     featureChannels: MNIST_FEATURE_CHANNELS)
 
