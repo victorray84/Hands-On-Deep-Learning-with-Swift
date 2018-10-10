@@ -1,0 +1,33 @@
+name: dl4swift
+channels:
+  - defaults
+dependencies:
+  - ca-certificates=2018.03.07=0
+  - openssl=1.0.2p=h1de35cc_0
+  - pip=9.0.1=py34_1
+  - python=3.4.5=0
+  - readline=6.2=2
+  - setuptools=27.2.0=py34_0
+  - sqlite=3.13.0=0
+  - tk=8.5.18=0
+  - wheel=0.29.0=py34_0
+  - xz=5.2.4=h1de35cc_4
+  - zlib=1.2.11=hf3cbc9b_2
+  - pip:
+    - absl-py==0.4.1
+    - astor==0.7.1
+    - gast==0.2.0
+    - grpcio==1.14.2
+    - markdown==2.6.11
+    - numpy==1.14.5
+    - protobuf==3.6.1
+    - scikit-learn==0.19.2
+    - scipy==1.1.0
+    - six==1.11.0
+    - tensorboard==1.10.0
+    - tensorflow==1.10.1
+    - termcolor==1.1.0
+    - werkzeug==0.14.1
+    - xgboost==0.80
+prefix: /anaconda3/envs/dl4swift
+
