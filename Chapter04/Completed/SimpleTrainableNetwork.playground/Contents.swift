@@ -25,6 +25,9 @@ typealias Batch = (images:[MPSImage], labels:[MPSCNNLossLabels])
 
 // MARK: - DataLoader
 
+/*
+ Class responsible for providing our model with data to sample from
+ */
 class DataLoader{
     
     public let channelFormat = MPSImageFeatureChannelFormat.unorm8
@@ -68,14 +71,6 @@ class DataLoader{
         }
         
         print("Initilised \(self.images.count) images and \(self.labels.count) labels")
-    }
-    
-    public func getImage(withCommandBuffer commandBuffer:MTLCommandBuffer, atIndex index:Int) -> MPSImage?{
-        let image = MPSTemporaryImage(
-            commandBuffer: commandBuffer,
-            imageDescriptor: self.imageDescriptor)
-        
-        return setImageData(image, withDataFromIndex: index)
     }
     
     public func getImage(withDevice device:MTLDevice, atIndex index:Int) -> MPSImage?{
@@ -153,24 +148,6 @@ class DataLoader{
         return Sample(image:image, label:label)
     }
     
-    public func getBatch(withDevice device:MTLDevice, inRange range:Range<Int>) -> Batch?{
-        var images = [MPSImage]()
-        var labels = [MPSCNNLossLabels]()
-        
-        for index in range{
-            if Int(index) < 0 || Int(index) >= self.count{
-                break
-            }
-            
-            if let sample = self.getSample(withDevice: device, atIndex: index){
-                images.append(sample.image)
-                labels.append(sample.label)
-            }
-        }
-        
-        return (images:images, labels:labels)
-    }
-    
     public func getSamples(withDevice device:MTLDevice) -> Batch?{
         var images = [MPSImage]()
         var labels = [MPSCNNLossLabels]()
@@ -239,12 +216,7 @@ class Datasource : NSObject, MPSCNNConvolutionDataSource{
         return self.cnnDescriptor
     }
     
-    func purge() {
-        print("purge")
-        if let weightsData = self.weightsData{
-            let weights = weightsData.toArray(type: Float.self)
-            print(weights)
-        }
+    func purge() {        
         self.weightsData = nil
         self.biasTermsData = nil
     }
@@ -314,7 +286,7 @@ extension Datasource{
                         let index = ((o * self.kernelSize.height + ky)
                             * self.kernelSize.width + kx)
                             * self.inputFeatureChannels + i
-                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.01)
+                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.1)
                     }
                 }
             }
@@ -328,11 +300,16 @@ extension Datasource{
 
 extension Datasource{
     
+    /*
+     Update method called on the CPU (set via the Nodes trainingStyle property)
+    */
     func update(with gradientState: MPSCNNConvolutionGradientState, sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
-        
         return false
     }
     
+    /*
+     Update method called on the CPU (set via the Nodes trainingStyle property)
+    */
     func update(with commandBuffer: MTLCommandBuffer, gradientState: MPSCNNConvolutionGradientState, sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> MPSCNNConvolutionWeightsAndBiasesState? {
         
         guard let optimizer = self.optimizer,
@@ -347,8 +324,6 @@ extension Datasource{
             inputMomentumVectors: nil,
             resultState: weightsAndBiasesState)
         
-        //weightsAndBiasesState.synchronize(on: commandBuffer)
-        
         return weightsAndBiasesState
     }
     
@@ -357,7 +332,7 @@ extension Datasource{
             return
         }
         
-        weightsAndBiasesState.synchronize(on: commandBuffer)
+        weightsAndBiasesState.synchronize(on: commandBuffer)        
     }
 }
 
@@ -477,14 +452,16 @@ class Network{
     
     public func train(
         withDataLoader dataLoader:DataLoader,
-        epochs : Int = 1000,
+        epochs : Int = 500,
         completionHandler handler: @escaping () -> Void) -> Bool{
         
         for e in 0..<epochs{
             if let samples = dataLoader.getSamples(withDevice: device){
                 self.trainStep(x: samples.images, y: samples.labels)
             }
-            print("Epoch \(e)")
+            if e % 10 == 0{
+                print("Epoch \(e)")
+            }
         }
         
         updateDatasources()
@@ -549,8 +526,7 @@ class Network{
             optimizer:optimizer)
         fcDatasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
             device: device,
-            cnnConvolutionDescriptor: fcDatasource.descriptor())
-        
+            cnnConvolutionDescriptor: fcDatasource.descriptor())        
         self.datasources.append(fcDatasource)
         
         let fc = MPSCNNFullyConnectedNode(
@@ -577,16 +553,14 @@ class Network{
         let graph = MPSNNGraph(
             device: device,
             resultImage: fcG.resultImage,
-            resultImageIsNeeded: true)
-        
-        //print(graph.debugDescription)
+            resultImageIsNeeded: false)
         
         return graph
     }
     
     private func createInferenceGraph() -> MPSNNGraph?{
         let input = MPSNNImageNode(handle: nil)
-        
+
         let fcDatasource = Datasource(
             name: "fc",
             kernelSize: KernelSize(
@@ -594,20 +568,18 @@ class Network{
                 height:2),
             inputFeatureChannels: 1,
             outputFeatureChannels: 4)
-        
+
         let fc = MPSCNNFullyConnectedNode(
             source: input,
             weights: fcDatasource)
-        
+
         let softmax = MPSCNNSoftMaxNode(source: fc.resultImage)
-        
+
         let graph = MPSNNGraph(
             device: device,
             resultImage: softmax.resultImage,
             resultImageIsNeeded: true)
-        
-        //print(graph.debugDescription)
-        
+
         return graph
     }
 }
@@ -640,12 +612,12 @@ let sample2 = dataLoader.getSample(withDevice: device, atIndex: 3)
 // Perform inference using our network with a untrained model
 let untrainedNetworkForInference = Network(withCommandQueue: commandQueue, mode: .inference)
 untrainedNetworkForInference.predict(x: sample!.image, completationHandler: { (result) in
-    print("Results from trained network for label \(sample!.label.label!)")
+    print("Results from **untrained** network for label \(sample!.label.label!)")
     print(result!)
 })
 
 untrainedNetworkForInference.predict(x: sample2!.image, completationHandler: { (result) in
-    print("Results from trained network for label \(sample!.label.label!)")
+    print("Results from **untrained** network for label \(sample2!.label.label!)")
     print(result!)
 })
 
@@ -658,12 +630,12 @@ trainingNetwork.train(withDataLoader: dataLoader) {
 // Perform inference using our network with a trained model
 let trainedNetworkForInference = Network(withCommandQueue: commandQueue, mode: .inference)
 trainedNetworkForInference.predict(x: sample!.image, completationHandler: { (result) in
-    print("Results from trained network for label \(sample!.label.label!)")
+    print("Results from **trained** network for label \(sample!.label.label!)")
     print(result!)
 })
 
 trainedNetworkForInference.predict(x: sample2!.image, completationHandler: { (result) in
-    print("Results from trained network for label \(sample!.label.label!)")
+    print("Results from **trained** network for label \(sample2!.label.label!)")
     print(result!)
 })
 

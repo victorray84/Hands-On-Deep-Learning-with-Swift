@@ -377,9 +377,6 @@ PlaygroundPage.current.liveView = DigitCanvasView(
             mipmapLevel: 0,
             withBytes: context.data!,
             bytesPerRow: bytesPerRow)
-        
-        let img = placeholderImage
-        
 
         network.forward(
             inputImage: placeholderImage,

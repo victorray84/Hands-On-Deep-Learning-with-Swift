@@ -10,6 +10,10 @@ import matplotlib.pyplot as plt
 
 TARGET_SIZE = (256,256)
 
+BACKGROUND_COLOR = 0
+
+INVERT_COLOR = True 
+
 def is_image(file_path):
 	image_extensions = ['png', 'jpg', 'jpeg']
 
@@ -47,7 +51,6 @@ def preprocess_images(source_path, dest_path):
 
 	os.mkdir(os.path.join(dest_path, 'valid'))
 
-
 	for sketch_dir, full_sketch_dir in get_sub_directories(source_path):
 		train_sketch_dir = os.path.join('train', sketch_dir)
 		valid_sketch_dir = os.path.join('valid', sketch_dir)
@@ -70,7 +73,10 @@ def preprocess_images(source_path, dest_path):
 		# iterate through all files in sketch directory 
 		for sketch_filename, sketch_file_path in get_files(full_sketch_dir):
 			img = plt.imread(sketch_file_path)
-			img = 255.0 - img
+			#img /= 255.
+			if INVERT_COLOR:
+				img = 255.0 - img
+            	
 			image_scale = float(TARGET_SIZE[0]) / float(img.shape[0])
 			rescaled_img = imresize(img, image_scale)
 
@@ -90,37 +96,35 @@ def preprocess_images(source_path, dest_path):
 					flipped_img = np.fliplr(rescaled_img)
 					imsave(save_file_path, flipped_img, format='png')					
 
-				# translate  
-				translated = False 				
+				# translate
+				translated = False
 				translated_img = np.copy(rescaled_img)
 
 				if random.random() > 0.8:
-					translated_img = shift_left(translated_img) 
-					translated = True 
+					translated_img = shift_left(translated_img)
+					translated = True
 
 				if random.random() > 0.8:
-					translated_img = shift_right(translated_img) 
-					translated = True 
+					translated_img = shift_right(translated_img)
+					translated = True
 
 				if random.random() > 0.8:
-					translated_img = shift_up(translated_img) 
-					translated = True 
+					translated_img = shift_up(translated_img)
+					translated = True
 
 				if translated:
 					save_file_path = os.path.join(os.path.join(dest_path, train_sketch_dir), "t_" + sketch_filename)
-					imsave(save_file_path, translated_img, format='png')	
+					imsave(save_file_path, translated_img, format='png')
 
-				# rotate 
-				if random.random() > 0.7:
+				# rotate
+				if random.random() > 0.8:
 					if random.random() > 0.5:
 						rotated_img = ndimage.rotate(rescaled_img, 15, reshape=False)
 					else:
 						rotated_img = ndimage.rotate(rescaled_img, -15, reshape=False)
 
 					save_file_path = os.path.join(os.path.join(dest_path, train_sketch_dir), "r_" + sketch_filename)
-					imsave(save_file_path, rotated_img, format='png')	
-
-
+					imsave(save_file_path, rotated_img, format='png')
 
 			current_index += 1
 
@@ -134,7 +138,7 @@ def shift_left(img, ox=20):
 			if (i < img.shape[0]-ox):
 				img[j][i] = img[j][i-ox]
 			elif (i < img.shape[0]-1):
-				img[j][i] = 0
+				img[j][i] = BACKGROUND_COLOR
 	return img 
 
 def shift_right(img, ox=20):
@@ -155,7 +159,7 @@ def shift_up(img, oy=20):
 			if (j < WIDTH - oy and j > oy):
 				img[j][i] = img[j+oy][i]
 			else:
-				img[j][i] = 0 
+				img[j][i] = BACKGROUND_COLOR
 	
 	return img 
 			

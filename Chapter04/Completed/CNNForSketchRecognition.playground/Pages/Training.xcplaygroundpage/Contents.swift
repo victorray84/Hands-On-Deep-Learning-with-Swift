@@ -69,7 +69,7 @@ guard let commandQueue = device.makeCommandQueue() else{
  Training is a iterative process of having our network make predictions and then adjusting the node weights
  based on the loss (*typically the mean squared error between the **predicted value** and **actual value***).
  */
-
+ //MPSNNGraph 
 // create our data loader
 let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
 
@@ -87,4 +87,6 @@ network.train(withDataLoader: dataLoader) {
     print("Training did finish")
 }
 
+
+//var t : MPSCNNConvolutionWeightsAndBiasesState
 //: [Goto next Page](@next)

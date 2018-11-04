@@ -63,7 +63,7 @@ guard let commandQueue = device.makeCommandQueue() else{
  */
 
 // create our data loader
-let dataLoader = DataLoader(device: device, sourcePathURL: validPath)
+let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize:1)
 
 let network = SketchCNN(
     withCommandQueue: commandQueue,
@@ -74,14 +74,18 @@ let network = SketchCNN(
     mode:SketchCNN.NetworkMode.inference)
 
 if let sample = dataLoader.getNextBatch(){
-    network.predict(x: sample.images[0]) { (probs) in
+    let img = sample.images[0]    
+    
+    network.predict(x: img) { (probs) in
+        
         print("Actual value \(sample.labels[0].label ?? "")")
         if let probs = probs{
             print("Probabilities \(probs)")
+            print("Predicted label \(dataLoader.labels[probs.argmax])")
+            print(dataLoader.labels)
         }
         print("Finished")
     }
 }
-
 
 //: [Next](@next)

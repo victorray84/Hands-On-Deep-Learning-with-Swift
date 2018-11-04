@@ -22,6 +22,8 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     
     let useBias : Bool
     
+    var activation : MPSNNNeuronDescriptor = MPSNNNeuronDescriptor.cnnNeuronDescriptor(with: .reLU)
+    
     lazy var cnnDescriptor : MPSCNNConvolutionDescriptor = {
         var descriptor = MPSCNNConvolutionDescriptor(
             kernelWidth: self.kernelSize.width,
@@ -31,6 +33,8 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
         
         descriptor.strideInPixelsX = self.strideSize.width
         descriptor.strideInPixelsY = self.strideSize.height
+        
+        descriptor.fusedNeuronDescriptor = self.activation
         
         return descriptor
     }()
@@ -78,10 +82,12 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
             return nil
         }
         
-        return UnsafeMutableRawPointer(
-            mutating: (biasTermsData as NSData).bytes).bindMemory(
-                to: Float.self,
-                capacity: self.outputFeatureChannels * MemoryLayout<Float>.size)
+//        return UnsafeMutableRawPointer(
+//            mutating: (biasTermsData as NSData).bytes).bindMemory(
+//                to: Float.self,
+//                capacity: self.outputFeatureChannels * MemoryLayout<Float>.stride)
+        
+        return nil 
     }
     
     func copy(with zone: NSZone? = nil) -> Any {
@@ -105,7 +111,7 @@ extension SketchCNNDatasource{
         print("load")
         
         self.weightsData = self.loadWeights()
-        self.biasTermsData = self.loadBiasTerms()
+        self.biasTermsData = self.loadBiasTerms()        
         
         return self.weightsData != nil
     }
@@ -153,7 +159,7 @@ extension SketchCNNDatasource{
                         let index = ((o * self.kernelSize.height + ky)
                             * self.kernelSize.width + kx)
                             * self.inputFeatureChannels + i
-                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.01)
+                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.1)
                     }
                 }
             }
@@ -164,7 +170,7 @@ extension SketchCNNDatasource{
     
     private func generateBiasTerms() -> Data?{
         let weightsCount = self.outputFeatureChannels
-        let biasTerms = Array<Float>(repeating: 0.001, count: weightsCount)
+        let biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
         
         return Data(fromArray:biasTerms)
     }
@@ -182,7 +188,9 @@ extension SketchCNNDatasource{
     }
     
     // Update called when training on the GPU
-    func update(with commandBuffer: MTLCommandBuffer, gradientState: MPSCNNConvolutionGradientState, sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> MPSCNNConvolutionWeightsAndBiasesState? {
+    func update(with commandBuffer: MTLCommandBuffer,
+                gradientState: MPSCNNConvolutionGradientState,
+                sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> MPSCNNConvolutionWeightsAndBiasesState? {
         
         guard let optimizer = self.optimizer,
             let weightsAndBiasesState = self.weightsAndBiasesState else{
@@ -229,7 +237,7 @@ extension SketchCNNDatasource{
     }
     
     func updateAndSaveParametersToDisk(){
-        print("updateAndSaveParametersToDisk")
+        print("updateAndSaveParametersToDisk \(self.name)")
         guard let weightsAndBiasesState = self.weightsAndBiasesState else{
             return
         }

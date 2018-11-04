@@ -19,6 +19,7 @@ public class SketchCNN{
     let inputShape : Shape
     let numberOfClasses : Int
     
+    var optimizer : MPSNNOptimizerStochasticGradientDescent?
     var graph : MPSNNGraph?
     
     var datasources = [SketchCNNDatasource]()
@@ -34,9 +35,17 @@ public class SketchCNN{
         self.mode = mode
         self.commandQueue = commandQueue
         
-        self.graph = mode == .training ? self.createTrainingGraph() : self.createInferenceGraph()
+        if mode == .training{
+            self.optimizer = MPSNNOptimizerStochasticGradientDescent(
+                device: self.device,
+                learningRate: 0.01)
+            
+            self.graph = self.createTrainingGraph()
+        } else{
+            self.graph = self.createInferenceGraph()
+        }
         
-        print(graph!.debugDescription)
+        //print(graph!.debugDescription)
     }
 }
 
@@ -57,7 +66,8 @@ extension SketchCNN{
             kernelSize: kernelSize,
             strideSize: strideSize,
             inputFeatureChannels: inputFeatureChannels,
-            outputFeatureChannels: outputFeatureChannels)
+            outputFeatureChannels: outputFeatureChannels,
+            optimizer: self.optimizer)
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
@@ -71,16 +81,20 @@ extension SketchCNN{
                                           weights: datasource)
         
         conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        conv.accumulatorPrecision = .float
         
-        let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
+        //let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
         
         if !includeMaxPooling{
-            return [conv, relu]
+            //return [conv, relu]
+            return [conv]
         }
         
-        let maxPool = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: 2, stride:2)
-        maxPool.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
-        return [conv, relu, maxPool]
+        //let maxPool = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: 2, stride:2)
+        let maxPool = MPSCNNPoolingMaxNode(source: conv.resultImage, filterSize: 2, stride:2)    
+        maxPool.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        //return [conv, relu, maxPool]
+        return [conv, maxPool]
     }
     
     func createDenseLayer(
@@ -95,7 +109,8 @@ extension SketchCNN{
             name: name,
             kernelSize: kernelSize,
             inputFeatureChannels: inputFeatureChannels,
-            outputFeatureChannels: outputFeatureChannels)
+            outputFeatureChannels: outputFeatureChannels,
+            optimizer: self.optimizer)
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
@@ -108,15 +123,24 @@ extension SketchCNN{
         let fc = MPSCNNFullyConnectedNode(
             source: x,
             weights: datasource)
+        fc.accumulatorPrecision = .float
         
         //fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
         
-        if !includeActivation{
-            return [fc]
+        if includeActivation{
+            datasource.activation = .cnnNeuronDescriptor(with: .reLU)
+        } else{
+            datasource.activation = .cnnNeuronDescriptor(with: .linear)
         }
         
-        let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
-        return [fc, relu]
+        return [fc]
+        
+//        if !includeActivation{
+//            return [fc]
+//        }
+//
+//        let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
+//        return [fc, relu]
     }
     
 }
@@ -133,6 +157,41 @@ extension SketchCNN{
             return
         }
         
+//        guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
+//            return
+//        }
+        
+        graph.outputStateIsTemporary = false
+//        let outputImage = graph.encode(to: commandBuffer, sourceImages: [x])
+//
+//        commandBuffer.addCompletedHandler { (commandBuffer) in
+//            print(commandBuffer.status)
+////            if outputImage != nil{
+////                print("\(outputImage?.width) \(outputImage?.height) \(outputImage?.featureChannels)")
+////
+////                guard let probs = outputImage!.toFloatArray() else{
+////                    handler(nil)
+////                    return
+////                }
+////
+////                handler(Array<Float>(probs[0..<self.numberOfClasses]))
+////            }
+//        }
+//
+//        commandBuffer.commit()
+//        commandBuffer.waitUntilCompleted()
+//
+//        if outputImage != nil{
+//            print("\(outputImage?.width) \(outputImage?.height) \(outputImage?.featureChannels)")
+//
+//            guard let probs = outputImage!.toFloatArray() else{
+//                handler(nil)
+//                return
+//            }
+//
+//            handler(Array<Float>(probs[0..<self.numberOfClasses]))
+//        }
+        
         graph.executeAsync(withSourceImages: [x]) { (outputImage, error) in
             DispatchQueue.main.async {
                 if error != nil{
@@ -140,17 +199,17 @@ extension SketchCNN{
                     handler(nil)
                     return
                 }
-                
+
                 if outputImage != nil{
-                    guard let probs = outputImage!.toFloatArray() else{
+                    guard let probs = outputImage!.toFloatArrayB() else{
                         handler(nil)
                         return
                     }
-                    
+
                     handler(Array<Float>(probs[0..<self.numberOfClasses]))
                     return
                 }
-                
+
                 handler(nil)
             }
         }
@@ -237,9 +296,14 @@ extension SketchCNN{
         
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         
-        return MPSNNGraph(device: device,
+        guard let graph = MPSNNGraph(device: device,
                           resultImage: softmax.resultImage,
-                          resultImageIsNeeded: true)
+                          resultImageIsNeeded: true) else{
+                            return nil
+        }
+        
+        graph.format = .float32
+        return graph 
     }
 }
 
@@ -247,44 +311,46 @@ extension SketchCNN{
     
     public func train(
         withDataLoader dataLoader:DataLoader,
-        epochs : Int = 100,
+        epochs : Int = 1000,
         completionHandler handler: @escaping () -> Void) -> Bool{
         
         autoreleasepool{
-            let trainingSemaphore = DispatchSemaphore(value:2)
+            let trainingSemaphore = DispatchSemaphore(value:1)
             
             var latestCommandBuffer : MTLCommandBuffer?
             
             for e in 1...epochs{
                 var batch = dataLoader.getNextBatch()
-                
+
                 while batch != nil && DataLoader.getBatchCount(batch: batch) == dataLoader.batchSize{
                     latestCommandBuffer = self.trainStep(
                         x: batch!.images,
                         y: batch!.labels,
                         semaphore:trainingSemaphore)
-                
+
                     // update batch
                     batch = dataLoader.getNextBatch()
                 }
-                
+
                 // wait for training to complete
-                if latestCommandBuffer?.status != .completed{
+                //if latestCommandBuffer?.status != .completed{
                     latestCommandBuffer?.waitUntilCompleted()
-                }
-                
+                //}
+
                 // print epoch every 10
                 if e % 10 == 0{
                     print("Finished epoch \(e)")
                 }
-                
+
                 // progressively save weights (always good practice)
                 if e % 50 == 0{
                     updateDatasources()
                 }
-                
+
                 // reset the current index of the data loader
                 dataLoader.reset()
+                
+                break
             }
         }        
         

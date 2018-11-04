@@ -119,6 +119,7 @@ extension DataLoader{
         
         return cgImage.toByteArray()
     }
+    
 }
 
 // MARK: - Sample methods
@@ -141,7 +142,7 @@ extension DataLoader{
     
     public func getNextBatch() -> Batch?{
         if self.mpsImagePool.count < self.batchSize{
-            self.initMpsImagePool()
+            //self.initMpsImagePool()
         }
         
         var batchImages = [MPSImage]()
@@ -170,23 +171,24 @@ extension DataLoader{
                 // get a unsafe pointer to our image data
                 let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
                 
-//                let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
+                let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
                 
                 // update the data of the associated MPSImage object (with the image data)
-                self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
-                    dataPointer,
-                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-                    imageIndex: 0)
-                
-//                mpsImage.writeBytes(
+//                self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
 //                    dataPointer,
 //                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
 //                    imageIndex: 0)
                 
+                mpsImage.writeBytes(
+                    dataPointer,
+                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
+                    imageIndex: 0)
+                
                 // add label and image to our batch
                 batchLabels.append(vecLabel)
-                batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
-//                batchImages.append(mpsImage)
+//                batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
+                
+                batchImages.append(mpsImage)
                 
                 // increase pointer to our pool
                 self.mpsImagePoolIndex += 1
