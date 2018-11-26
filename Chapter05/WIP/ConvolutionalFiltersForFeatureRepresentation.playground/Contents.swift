@@ -25,7 +25,7 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     let name : String
     let kernelSize : (width:Int, height:Int) = (width:3, height:3)
     let inputFeatureChannels : Int = 1
-    let outputFeatureChannels : Int = 0 // TODO add number of output feature channels
+    let outputFeatureChannels : Int = 1 // TODO add number of output feature channels
     
     var weightsData : Data?
     
@@ -85,16 +85,22 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
      Note: load may be called to merely inspect the descriptor. In some circumstances, it may be worthwhile to postpone weight and bias construction until they are actually needed to save touching memory and keep the working set small. The load function is intended to be an opportunity to open files or mark memory no longer purgeable.
      */
     public func load() -> Bool{
-        // TODO Create filters to extract features
+        var kernelMatricies = [[[Float]]]()
         
-        let kernelMatricies = [[[Float]]]()
+        kernelMatricies.append([
+            [-1.0,  2.0,  -1.0],
+            [-1.0,  2.0,  -1.0],
+            [-1.0,  2.0,  -1.0]
+        ])
+
+        // TODO Create filters to extract features
         
         // Initilize weights
         let weightsCount = self.outputFeatureChannels
             * self.kernelSize.height
             * self.kernelSize.width
             * self.inputFeatureChannels
-        
+
         var weightsArray = Array<Float>(repeating: 0, count: weightsCount)
         
         // Expected format :: weights[ outputChannel ][ kernelY ][ kernelX ][ inputChannel ]
@@ -102,7 +108,8 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
             for ky in 0..<self.kernelSize.height {
                 for kx in 0..<self.kernelSize.width {
                     for i in 0..<self.inputFeatureChannels {
-                        let weightsArrayIndex = ((o * self.kernelSize.height + ky)
+                        let weightsArrayIndex = (
+                            (o * self.kernelSize.height + ky)
                             * self.kernelSize.width + kx)
                             * self.inputFeatureChannels + i
                         weightsArray[weightsArrayIndex] = kernelMatricies[o][ky][kx]
@@ -111,7 +118,9 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
             }
         }
         
-        self.weightsData = Data(buffer: UnsafeBufferPointer(start: &weightsArray, count: weightsArray.count))
+        self.weightsData = Data(
+            buffer: UnsafeBufferPointer(
+                start: &weightsArray, count: weightsArray.count))
         
         return true
     }
@@ -173,7 +182,8 @@ class Network{
             resultImageIsNeeded: true)
     }
     
-    func forward(image:MPSImage, completionHandler handler: @escaping (MPSImage?) -> Void){
+    func forward(image:MPSImage,
+                 completionHandler handler: @escaping (MPSImage?) -> Void){
         guard let graph = self.graph else{
             handler(nil)
             return
@@ -238,13 +248,39 @@ guard let inputImage = dataLoader.loadImage(
 
 // TODO Create function to extract a single channel from a models output (extractChannelAsCGImage)
 
+func extractChannelAsCGImage(buffer:[Float],
+                             imageWidth:Int,
+                             imageHeight:Int,
+                             outputFeatureChannel:Int=0) -> CGImage?{
+    
+    let count = imageWidth * imageHeight
+    let channelStride = Int(buffer.count / (count))
+
+    var outputRGBA = [UInt8](repeating: 0, count: count)
+    
+    var index = 0
+    for i in stride(from: outputFeatureChannel,
+                    to: buffer.count,
+                    by: channelStride){
+                        outputRGBA[index] = UInt8(max(min(255, buffer[i] * 255), 0))
+                        index += 1
+    }
+    
+    return CGImage.fromByteArray(
+        bytes: outputRGBA,
+        width: imageWidth,
+        height: imageHeight,
+        channels: 1)
+
+}
 
 let network = Network(withCommandQueue: commandQueue)
+
 network.forward(image: inputImage) { (image) in
     if let outputImage = image{
         print("Output image :: height:\(outputImage.height), width:\(outputImage.width), feature channels:\(outputImage.featureChannels), Number of images:\(outputImage.numberOfImages)")
         
-        
+        // Convert MPSImage to a multi-dimensional array of floats
         guard let buffer = outputImage.toFloatArray() else{
             fatalError("Failed to export Float array")
         }
@@ -252,12 +288,15 @@ network.forward(image: inputImage) { (image) in
         // TODO: Create individual images for each of the channels
         // (where each channel is the convolution for each of our specified filters)
         var extractedChannels = [CGImage]()
-        
-        
-        let verticalFilterChannel = extractedChannels[0]
-        let horizontalFilterChannel = extractedChannels[1]
-        let diagonal45FilterChannel = extractedChannels[2]
-        let diagonal135FilterChannel = extractedChannels[3]
+        for channel in 0..<outputImage.featureChannels{
+            if let extractedChannel = extractChannelAsCGImage(
+                buffer: buffer,
+                imageWidth: outputImage.width,
+                imageHeight: outputImage.height,
+                outputFeatureChannel: channel){
+                extractedChannels.append(extractedChannel)
+            }
+        }
         
         // Create a view to present the pixel intensity for each of our images
         let barPlotViewFrame = NSRect(
@@ -268,6 +307,7 @@ network.forward(image: inputImage) { (image) in
             frame: barPlotViewFrame)
         
         // TODO Add bars to our bar plot using the extracted features
+        barPlotView.add(label: "Vert", image: extractedChannels[0])
         
         // Set our view to the PLaygrounds liveView
         PlaygroundPage.current.liveView = barPlotView

@@ -269,9 +269,9 @@ func extractChannelAsCGImage(buffer:[Float],
                              outputFeatureChannel:Int=0) -> CGImage?{
     let count = imageWidth * imageHeight
     let channelStride = Int(buffer.count / (count))
-    
+
     var outputRGBA = [UInt8](repeating: 0, count: count)
-    
+
     var index = 0
     for i in stride(from: outputFeatureChannel,
                     to: buffer.count,
@@ -279,7 +279,7 @@ func extractChannelAsCGImage(buffer:[Float],
                         outputRGBA[index] = UInt8(max(min(255, buffer[i] * 255), 0))
                         index += 1
     }
-    
+
     return CGImage.fromByteArray(
         bytes: outputRGBA,
         width: imageWidth,

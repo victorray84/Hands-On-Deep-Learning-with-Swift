@@ -30,7 +30,6 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     var weightsData : Data?
     
     init(name:String) {
-        
         self.name = name
     }
     
@@ -85,9 +84,9 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
      Note: load may be called to merely inspect the descriptor. In some circumstances, it may be worthwhile to postpone weight and bias construction until they are actually needed to save touching memory and keep the working set small. The load function is intended to be an opportunity to open files or mark memory no longer purgeable.
      */
     public func load() -> Bool{
-        // TODO Create filters to extract features
+        var kernelMatricies = [[[Float]]]()
         
-        let kernelMatricies = [[[Float]]]()
+        // TODO Create filters to extract features
         
         // Initilize weights
         let weightsCount = self.outputFeatureChannels
@@ -244,7 +243,7 @@ network.forward(image: inputImage) { (image) in
     if let outputImage = image{
         print("Output image :: height:\(outputImage.height), width:\(outputImage.width), feature channels:\(outputImage.featureChannels), Number of images:\(outputImage.numberOfImages)")
         
-        
+        // Convert MPSImage to a multi-dimensional array of floats
         guard let buffer = outputImage.toFloatArray() else{
             fatalError("Failed to export Float array")
         }
@@ -252,12 +251,6 @@ network.forward(image: inputImage) { (image) in
         // TODO: Create individual images for each of the channels
         // (where each channel is the convolution for each of our specified filters)
         var extractedChannels = [CGImage]()
-        
-        
-        let verticalFilterChannel = extractedChannels[0]
-        let horizontalFilterChannel = extractedChannels[1]
-        let diagonal45FilterChannel = extractedChannels[2]
-        let diagonal135FilterChannel = extractedChannels[3]
         
         // Create a view to present the pixel intensity for each of our images
         let barPlotViewFrame = NSRect(
