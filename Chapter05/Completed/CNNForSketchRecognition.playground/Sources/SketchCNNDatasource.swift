@@ -5,8 +5,6 @@ import MetalPerformanceShaders
 
 class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     
-    static let FolderName = "sketch_cnn_weights"
-    
     let name : String
     let weightsPathURL : URL
     
@@ -75,7 +73,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     }
     
     public func biasTerms() -> UnsafeMutablePointer<Float>?{
-        guard let biasTermsData = self.biasTermsData else{
+        guard self.useBias, let biasTermsData = self.biasTermsData else{
             return nil
         }
         
@@ -88,7 +86,9 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     func copy(with zone: NSZone? = nil) -> Any {
         let copy = SketchCNNDatasource(
             name: self.name,
+            weightsPathURL:self.weightsPathURL,
             kernelSize: self.kernelSize,
+            strideSize: self.strideSize,
             inputFeatureChannels: self.inputFeatureChannels,
             outputFeatureChannels: self.outputFeatureChannels,
             optimizer: self.optimizer)
@@ -110,17 +110,15 @@ extension SketchCNNDatasource{
     }
     
     private func loadWeights() -> Data?{
-        let url = playgroundSharedDataDirectory.appendingPathComponent("\(SketchCNNDatasource.FolderName)/\(self.name)_conv.data")
+        let url = self.weightsPathURL.appendingPathComponent("\(self.name)_conv.data")
         
         do{
             print("loading weights \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
             print("Generating weights \(error)")
-            // Generate weights and save to disk to avoid regenerated them duing subsequent calls to load
-            self.weightsData = self.generateRandomWeights()
-            self.saveWeightsToDisk()
-            return self.weightsData
+            // Generate weights
+            return self.generateRandomWeights()
         }
     }
     
@@ -129,17 +127,15 @@ extension SketchCNNDatasource{
             return nil
         }
         
-        let url = playgroundSharedDataDirectory.appendingPathComponent("\(SketchCNNDatasource.FolderName)/\(self.name)_bias.data")
+        let url = self.weightsPathURL.appendingPathComponent("\(self.name)_bias.data")
         
         do{
             print("loading bias terms \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
             print("Generating bias \(error)")
-            // Generate bias terms and save to disk to avoid regenerated them duing subsequent calls to load
-            self.biasTermsData = self.generateBiasTerms()
-            self.saveBiasTermsToDisk()
-            return self.biasTermsData
+            // Generate bias terms 
+            return self.generateBiasTerms()
         }
     }
     
@@ -152,18 +148,8 @@ extension SketchCNNDatasource{
         print("Generating weights for \(self.name) size = \(count)")
         
         var randomWeights = Array<Float>(repeating: 0, count: count)
-        
-        for o in 0..<self.outputFeatureChannels{
-            for ky in 0..<self.kernelSize.height{
-                for kx in 0..<self.kernelSize.width{
-                    for i in 0..<self.inputFeatureChannels{
-                        let index = ((o * self.kernelSize.height + ky)
-                            * self.kernelSize.width + kx)
-                            * self.inputFeatureChannels + i
-                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.01)
-                    }
-                }
-            }
+        for i in 0..<randomWeights.count{
+            randomWeights[i] = Float.random(in: 0...0.01)
         }
         
         return Data(fromArray:randomWeights)
@@ -289,9 +275,9 @@ extension SketchCNNDatasource{
         }
         
         // check the folder exists
-        self.checkFolderExists(atPath: playgroundSharedDataDirectory.appendingPathComponent("\(SketchCNNDatasource.FolderName)"))
+        self.checkFolderExists(atPath: self.weightsPathURL)
         
-        let url = self.weightsPathURL.appendingPathComponent("(self.name)_bias.data")
+        let url = self.weightsPathURL.appendingPathComponent("\(self.name)_bias.data")
         
         do{
             try data.write(to: url, options: NSData.WritingOptions.atomicWrite)

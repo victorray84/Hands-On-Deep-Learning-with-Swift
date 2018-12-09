@@ -10,7 +10,13 @@ import Accelerate
 import GLKit
 import PlaygroundSupport
 
+let BASE_WEIGHTS_PATH = "sketch_cnn_weights"
+
 let BASE_VALID_PATH = "Sketches/preprocessed/valid"
+
+let weightsPath = PlaygroundSupport
+    .playgroundSharedDataDirectory
+    .appendingPathComponent("\(BASE_WEIGHTS_PATH)")
 
 let validPath = PlaygroundSupport
     .playgroundSharedDataDirectory
@@ -47,45 +53,70 @@ guard let commandQueue = device.makeCommandQueue() else{
  afterwards we would reset it and start from the begining - below is an extract demonstrating this.
  */
 
-// let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
-//var batch = dataLoader.getNextBatch()
-//
-//while batch != nil && DataLoader.getBatchCount(batch: batch) > 0{
-//    print(DataLoader.getBatchCount(batch: batch))
-//    batch = dataLoader.getNextBatch()
-//}
-//print("finished")
-
 /*:
  ### Training
  Training is a iterative process of having our network make predictions and then adjusting the node weights
  based on the loss (*typically the mean squared error between the **predicted value** and **actual value***).
  */
 
-// create our data loader
-let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize:1)
+// Create our data loader
+let dataLoader = DataLoader(device: device, sourcePathURL: validPath)
 
+// We pass in the target shape which will be used to scale the inputs accordingly
+let targetShape = Shape(
+    width:dataLoader.imageWidth,
+    height:dataLoader.imageHeight,
+    channels:dataLoader.featureChannels)
+
+// Create our training network
 let network = SketchCNN(
     withCommandQueue: commandQueue,
-    inputShape: Shape(width:dataLoader.imageWidth,
-                      height:dataLoader.imageHeight,
-                      channels:dataLoader.featureChannels),
+    inputShape: targetShape,
     numberOfClasses: dataLoader.numberOfClasses,
-    mode:SketchCNN.NetworkMode.inference)
+    weightsPathURL: weightsPath,
+    mode: .inference)
 
-if let sample = dataLoader.getNextBatch(){
-    let img = sample.images[0]    
-    
-    network.predict(x: img) { (probs) in
-        
-        print("Actual value \(sample.labels[0].label ?? "")")
-        if let probs = probs{
-            print("Probabilities \(probs)")
-            print("Predicted label \(dataLoader.labels[probs.argmax])")
-            print(dataLoader.labels)
-        }
-        print("Finished")
+//autoreleasepool{
+    guard let commandBuffer = commandQueue.makeCommandBuffer() else{
+        fatalError()
     }
-}
+    
+    if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
+        let img = batch.images[30]
+        
+//        network.predict(x: img) { (probs) in
+//
+//            print("Actual value \(batch.labels[30].label ?? "")")
+//            if let probs = probs{
+//                print("Probabilities \(probs)")
+//                print("Predicted label \(dataLoader.labels[probs.argmax])")
+//                print(dataLoader.labels)
+//            }
+//            print("Finished")
+//        }
+        
+        network.predict(x: img) { (outputImage) in
+            
+            // convert output texture to image
+            
+            let img = outputImage 
+            let tex = outputImage?.texture
+            print("w \(outputImage?.width) h \(outputImage?.height) c \(outputImage?.featureChannels)")
+            
+            if let array = img?.toFloatArray(){
+                var count = 0
+                for i in 0..<array.count{
+                    if array[i] > 0{
+                        print("\(i) \(array[i])")
+                        count += 1
+                    }
+                }
+                
+                print("\(Float(count)/Float(array.count))")
+            }
+        }
+    }
+//}
+
 
 //: [Next](@next)

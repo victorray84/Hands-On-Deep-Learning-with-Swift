@@ -25,7 +25,7 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     let name : String
     let kernelSize : (width:Int, height:Int) = (width:3, height:3)
     let inputFeatureChannels : Int = 1
-    let outputFeatureChannels : Int = 1 // TODO add number of output feature channels
+    let outputFeatureChannels : Int = 4 // TODO add number of output feature channels
     
     var weightsData : Data?
     
@@ -87,13 +87,33 @@ class CNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     public func load() -> Bool{
         var kernelMatricies = [[[Float]]]()
         
+        // TODO Create filters to extract features
         kernelMatricies.append([
             [-1.0,  2.0,  -1.0],
             [-1.0,  2.0,  -1.0],
             [-1.0,  2.0,  -1.0]
         ])
-
-        // TODO Create filters to extract features
+        
+        // Horizontal edge filter
+        kernelMatricies.append([
+            [-1.0,  -1.0, -1.0],
+            [2.0,   2.0,  2.0],
+            [-1.0,  -1.0, -1.0]
+        ])
+        
+        // 45 degree edge filter
+        kernelMatricies.append([
+            [-1.0,  -1.0, 2.0],
+            [-1.0,  2.0,  -1.0],
+            [2.0,   -1.0, -1.0]
+        ])
+        
+        // 135 degree edge filter
+        kernelMatricies.append([
+            [2.0,   -1.0, -1.0],
+            [-1.0,  2.0,  -1.0],
+            [-1.0,  -1.0, 2.0]
+        ])
         
         // Initilize weights
         let weightsCount = self.outputFeatureChannels
@@ -241,7 +261,7 @@ guard let commandQueue = device.makeCommandQueue() else{
 let dataLoader = DataLoader(commandQueue:commandQueue)
 
 guard let inputImage = dataLoader.loadImage(
-    filename: "VerticalRectangle",
+    filename: "Translated_Square",
     fileExtension: "png") else{
         fatalError("Failed to load image")
 }
@@ -308,6 +328,9 @@ network.forward(image: inputImage) { (image) in
         
         // TODO Add bars to our bar plot using the extracted features
         barPlotView.add(label: "Vert", image: extractedChannels[0])
+        barPlotView.add(label: "Horz", image: extractedChannels[1])
+        barPlotView.add(label: "45 deg", image: extractedChannels[2])
+        barPlotView.add(label: "135 deg", image: extractedChannels[3])
         
         // Set our view to the PLaygrounds liveView
         PlaygroundPage.current.liveView = barPlotView

@@ -8,7 +8,8 @@ from scipy.misc import imresize, imsave
 from scipy import ndimage
 import matplotlib.pyplot as plt
 
-TARGET_SIZE = (256,256)
+#TARGET_SIZE = (256,256)
+TARGET_SIZE = (128,128)
 
 BACKGROUND_COLOR = 0
 

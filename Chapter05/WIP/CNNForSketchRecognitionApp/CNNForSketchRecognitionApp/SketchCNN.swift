@@ -48,7 +48,7 @@ public class SketchCNN{
             self.graph = self.createInferenceGraph()
         }
         
-        print(graph!.debugDescription)
+        //print(graph!.debugDescription)
     }
 }
 
@@ -63,6 +63,7 @@ extension SketchCNN{
                          inputFeatureChannels:Int,
                          outputFeatureChannels:Int,
                          includeMaxPooling:Bool=true,
+                         poolSize : Int = 2,
                          dropoutProbability:Float=0.0) -> [MPSNNFilterNode]{
         
         let datasource = SketchCNNDatasource(
@@ -91,14 +92,17 @@ extension SketchCNN{
             return [conv, relu]
         }
         
-        let pooling = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: 2)
+        let pooling = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: poolSize)
         pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
         
         if self.mode == .inference || dropoutProbability == 0.0{
             return [conv, relu, pooling]
         }
         
-        let dropout = MPSCNNDropoutNode(source: pooling.resultImage, keepProbability: (1.0 - dropoutProbability))
+        let dropout = MPSCNNDropoutNode(
+            source: pooling.resultImage,
+            keepProbability: (1.0 - dropoutProbability))
+        
         return [conv, relu, pooling, dropout]
     }
     
@@ -130,7 +134,9 @@ extension SketchCNN{
         let fc = MPSCNNFullyConnectedNode(
             source: x,
             weights: datasource)
-        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        
+//        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
         
         if !includeActivation{
             return [fc]
@@ -174,6 +180,11 @@ extension SketchCNN{
                         return
                     }
                     
+                    let oi = outputImage!
+                    print("Output image w \(oi.width), h \(oi.height), c \(oi.featureChannels), no. \(oi.numberOfImages)")
+//                    let texture = oi.texture
+                    
+                    
                     handler(Array<Float>(probs[0..<self.numberOfClasses]))
                     return
                 }
@@ -189,7 +200,7 @@ extension SketchCNN{
         // placeholder node
         let input = MPSNNImageNode(handle: nil)
         
-        // INPUT = 256x256x1
+        // INPUT = 128x128x1
         
         // Scale
         let scale = MPSNNLanczosScaleNode(
@@ -199,19 +210,21 @@ extension SketchCNN{
                 height: self.inputShape.height,
                 depth: 1))
         
-        // OUTPUT = 64x64x1
+        // OUTPUT = 128x128x1
         
         // layer 1
         let layer1Nodes = self.createConvLayer(
             name: "l1",
             x: scale.resultImage,
-            kernelSize: KernelSize(width:5, height:5),
-            strideSize: KernelSize(width:1, height:1),
+            kernelSize: KernelSize(width:7, height:7),
+            strideSize: KernelSize(width:2, height:2),
             inputFeatureChannels: 1,
             outputFeatureChannels: 32,
-            includeMaxPooling: true)
+            includeMaxPooling: false,
+            poolSize: 0,
+            dropoutProbability: 0.3)
         
-        // OUTPUT = 32x32x32
+        // OUTPUT = 64x64x32
         
         // layer 2
         let layer2Nodes = self.createConvLayer(
@@ -220,44 +233,62 @@ extension SketchCNN{
             kernelSize: KernelSize(width:5, height:5),
             strideSize: KernelSize(width:1, height:1),
             inputFeatureChannels: 32,
-            outputFeatureChannels: 64,
-            includeMaxPooling: true)
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2)
         
-        // OUTPUT = 16x16x64
+        // OUTPUT = 32x32x32
         
         // layer 3
         let layer3Nodes = self.createConvLayer(
             name: "l3",
             x: layer2Nodes.last!.resultImage,
-            kernelSize: KernelSize(width:3, height:3),
+            kernelSize: KernelSize(width:5, height:5),
             strideSize: KernelSize(width:1, height:1),
-            inputFeatureChannels: 64,
-            outputFeatureChannels: 128,
-            includeMaxPooling: true)
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
         
-        // OUTPUT = 8x8x128
+        // OUTPUT = 16x16x32
         
-        // fully connected layer
-        let layer4Nodes = createDenseLayer(
+        let layer4Nodes = self.createConvLayer(
             name: "l4",
             x: layer3Nodes.last!.resultImage,
-            kernelSize: KernelSize(width:8, height:8),
-            inputFeatureChannels: 128,
-            outputFeatureChannels: 256)
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
         
-        // OUTPUT = 256
+        // OUTPUT = 8x8x32
         
+        // fully connected layer
         let layer5Nodes = createDenseLayer(
             name: "l5",
             x: layer4Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:8, height:8),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 64,
+            includeActivation: true,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 64
+        
+        let layer6Nodes = createDenseLayer(
+            name: "l6",
+            x: layer5Nodes.last!.resultImage,
             kernelSize: KernelSize(width:1, height:1),
-            inputFeatureChannels: 256,
+            inputFeatureChannels: 64,
             outputFeatureChannels: self.numberOfClasses,
             includeActivation: false)
         
         // OUTPUT = numberOfClasses
         
-        let softmax = MPSCNNSoftMaxNode(source: layer5Nodes.last!.resultImage)
+        let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         
         guard let graph = MPSNNGraph(device: device,
                                      resultImage: softmax.resultImage,
@@ -290,7 +321,6 @@ extension SketchCNN{
                         withDataLoader:dataLoader,
                         semaphore:trainingSemaphore)
                 }
-                
             }
             
             // wait for training to complete
@@ -299,7 +329,7 @@ extension SketchCNN{
             }
             
             // progressively save weights (always good practice)
-            if epoch % 50 == 0{
+            if epoch % 5 == 0{
                 print("Finished epoch \(epoch)")
                 updateDatasources()
             }
@@ -309,7 +339,6 @@ extension SketchCNN{
         }
         
         updateDatasources()
-        
         
         handler()
         
@@ -336,16 +365,36 @@ extension SketchCNN{
             return nil
         }
         
-        let output = graph.encodeBatch(
-            to: commandBuffer,
-            sourceImages: [batch.images],
-            sourceStates: [batch.labels])
+        //graph.encodeBatch(to: <#T##MTLCommandBuffer#>, sourceImages: <#T##[[MPSImage]]#>, sourceStates: <#T##[[MPSState]]?#>)
+        
+        //graph.encodeBatch(to: <#T##MTLCommandBuffer#>, sourceImages: <#T##[[MPSImage]]#>, sourceStates: <#T##[[MPSState]]?#>)
+
+        
+        for i in 0..<batch.images.count{
+            graph.encode(
+                to: commandBuffer,
+                sourceImages: [batch.images[i]],
+                sourceStates: [batch.labels[i]],
+                intermediateImages: nil,
+                destinationStates: nil)
+        }
+        
+//        let output = graph.encodeBatch(to: commandBuffer,
+//                          sourceImages: [batch.images],
+//                          sourceStates: [batch.labels],
+//                          intermediateImages: nil,
+//                          destinationStates: nil)
+        
+//        let output = graph.encodeBatch(
+//            to: commandBuffer,
+//            sourceImages: [batch.images],
+//            sourceStates: [batch.labels])
         
         commandBuffer.addCompletedHandler({ (commandBuffer) in
-            if let output = output{
-                print("count \(output.count) size:\(output[0].width)x\(output[0].height) channels:\(output[0].width) num of images\(output[0].numberOfImages)")
-//                print(output[0].toFloatArray())
-            }
+//            if let output = output{
+//                print("count \(output.count) size:\(output[0].width)x\(output[0].height) channels:\(output[0].featureChannels) num of images\(output[0].numberOfImages)")
+////                print(output[0].toFloatArray())
+//            }
             
             semaphore.signal()
         })
@@ -379,7 +428,7 @@ extension SketchCNN{
         // placeholder node
         let input = MPSNNImageNode(handle: nil)
         
-        // INPUT = 256x256x1
+        // INPUT = 128x128x1
         
         // Scale
         let scale = MPSNNLanczosScaleNode(
@@ -398,10 +447,12 @@ extension SketchCNN{
             kernelSize: KernelSize(width:7, height:7),
             strideSize: KernelSize(width:2, height:2),
             inputFeatureChannels: 1,
-            outputFeatureChannels: 16,
-            includeMaxPooling: false)
+            outputFeatureChannels: 32,
+            includeMaxPooling: false,
+            poolSize: 0,
+            dropoutProbability: 0.3)
         
-        // OUTPUT = 64x64x16
+        // OUTPUT = 64x64x32
         
         // layer 2
         let layer2Nodes = self.createConvLayer(
@@ -409,9 +460,10 @@ extension SketchCNN{
             x: layer1Nodes.last!.resultImage,
             kernelSize: KernelSize(width:5, height:5),
             strideSize: KernelSize(width:1, height:1),
-            inputFeatureChannels: 16,
+            inputFeatureChannels: 32,
             outputFeatureChannels: 32,
-            includeMaxPooling: true)
+            includeMaxPooling: true,
+            poolSize: 2)
         
         // OUTPUT = 32x32x32
         
@@ -419,36 +471,52 @@ extension SketchCNN{
         let layer3Nodes = self.createConvLayer(
             name: "l3",
             x: layer2Nodes.last!.resultImage,
-            kernelSize: KernelSize(width:3, height:3),
+            kernelSize: KernelSize(width:5, height:5),
             strideSize: KernelSize(width:1, height:1),
             inputFeatureChannels: 32,
             outputFeatureChannels: 32,
             includeMaxPooling: true,
-            dropoutProbability: 0.4)
+            poolSize: 2,
+            dropoutProbability: 0.3)
         
         // OUTPUT = 16x16x32
         
-        // fully connected layer
-        let layer4Nodes = createDenseLayer(
+        let layer4Nodes = self.createConvLayer(
             name: "l4",
             x: layer3Nodes.last!.resultImage,
-            kernelSize: KernelSize(width:16, height:16),
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
             inputFeatureChannels: 32,
-            outputFeatureChannels: 64)
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
         
-        // OUTPUT = 256
+        // OUTPUT = 8x8x32
         
+        // fully connected layer
         let layer5Nodes = createDenseLayer(
             name: "l5",
             x: layer4Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:8, height:8),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 64,
+            includeActivation: true,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 64
+        
+        let layer6Nodes = createDenseLayer(
+            name: "l6",
+            x: layer5Nodes.last!.resultImage,
             kernelSize: KernelSize(width:1, height:1),
-            inputFeatureChannels: 256,
+            inputFeatureChannels: 64,
             outputFeatureChannels: self.numberOfClasses,
             includeActivation: false)
         
         // OUTPUT = numberOfClasses
         
-        let softmax = MPSCNNSoftMaxNode(source: layer5Nodes.last!.resultImage)
+        let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         
         // === Define the loss function ===
         
@@ -468,6 +536,12 @@ extension SketchCNN{
         
         // Keep track of the last nodes result image to pass it to the next
         var lastResultImage = softmaxG.resultImage
+        
+        let _ = layer6Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            lastResultImage = gradientNode.resultImage
+            return gradientNode
+        }
         
         let _ = layer5Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
@@ -501,6 +575,6 @@ extension SketchCNN{
         
         return MPSNNGraph(device: self.device,
                           resultImage: lastResultImage,
-                          resultImageIsNeeded: false)
+                          resultImageIsNeeded: true)
     }
 }

@@ -16,7 +16,6 @@
 		8478DA10219A346E00BD99CB /* CGImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA0F219A346E00BD99CB /* CGImage+Extension.swift */; };
 		8478DA12219A348100BD99CB /* Data+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA11219A348100BD99CB /* Data+Extension.swift */; };
 		8478DA14219A349500BD99CB /* DataLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA13219A349500BD99CB /* DataLoader.swift */; };
-		8478DA16219A34B200BD99CB /* Float+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA15219A34B200BD99CB /* Float+Extension.swift */; };
 		8478DA18219A34C100BD99CB /* MPSImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA17219A34C100BD99CB /* MPSImage+Extension.swift */; };
 		8478DA1A219A34D000BD99CB /* MTLBuffer+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA19219A34D000BD99CB /* MTLBuffer+Extension.swift */; };
 		8478DA1C219A34E400BD99CB /* NSImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA1B219A34E400BD99CB /* NSImage+Extension.swift */; };
@@ -39,7 +38,6 @@
 		8478DA0F219A346E00BD99CB /* CGImage+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CGImage+Extension.swift"; sourceTree = "<group>"; };
 		8478DA11219A348100BD99CB /* Data+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Data+Extension.swift"; sourceTree = "<group>"; };
 		8478DA13219A349500BD99CB /* DataLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataLoader.swift; sourceTree = "<group>"; };
-		8478DA15219A34B200BD99CB /* Float+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Float+Extension.swift"; sourceTree = "<group>"; };
 		8478DA17219A34C100BD99CB /* MPSImage+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MPSImage+Extension.swift"; sourceTree = "<group>"; };
 		8478DA19219A34D000BD99CB /* MTLBuffer+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MTLBuffer+Extension.swift"; sourceTree = "<group>"; };
 		8478DA1B219A34E400BD99CB /* NSImage+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSImage+Extension.swift"; sourceTree = "<group>"; };
@@ -102,7 +100,6 @@
 				8478DA0D219A345B00BD99CB /* Array+Extension.swift */,
 				8478DA0F219A346E00BD99CB /* CGImage+Extension.swift */,
 				8478DA11219A348100BD99CB /* Data+Extension.swift */,
-				8478DA15219A34B200BD99CB /* Float+Extension.swift */,
 				8478DA17219A34C100BD99CB /* MPSImage+Extension.swift */,
 				8478DA19219A34D000BD99CB /* MTLBuffer+Extension.swift */,
 				8478DA1B219A34E400BD99CB /* NSImage+Extension.swift */,
@@ -191,7 +188,6 @@
 				8478DA1E219A34FB00BD99CB /* SketchCNN.swift in Sources */,
 				8478DA22219A353B00BD99CB /* Types.swift in Sources */,
 				8478DA20219A351200BD99CB /* SketchCNNDatasource.swift in Sources */,
-				8478DA16219A34B200BD99CB /* Float+Extension.swift in Sources */,
 				8478DA18219A34C100BD99CB /* MPSImage+Extension.swift in Sources */,
 				8478DA10219A346E00BD99CB /* CGImage+Extension.swift in Sources */,
 				844F3A5D219B02DE004DE12A /* SketchCNNPoolPadding.swift in Sources */,

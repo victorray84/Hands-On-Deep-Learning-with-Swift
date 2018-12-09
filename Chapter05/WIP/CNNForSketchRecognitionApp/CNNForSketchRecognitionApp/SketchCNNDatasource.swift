@@ -89,6 +89,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
             name: self.name,
             weightsPathURL:self.weightsPathURL,
             kernelSize: self.kernelSize,
+            strideSize: self.strideSize,
             inputFeatureChannels: self.inputFeatureChannels,
             outputFeatureChannels: self.outputFeatureChannels,
             optimizer: self.optimizer)
@@ -104,7 +105,7 @@ extension SketchCNNDatasource{
     
     func load() -> Bool {
         self.weightsData = self.loadWeights()
-        self.biasTermsData = self.loadBiasTerms()
+        self.biasTermsData = self.loadBiasTerms()        
         
         return self.weightsData != nil
     }
@@ -117,10 +118,8 @@ extension SketchCNNDatasource{
             return try Data(contentsOf:url)
         } catch{
             print("Generating weights \(error)")
-            // Generate weights and save to disk to avoid regenerated them duing subsequent calls to load
-            self.weightsData = self.generateRandomWeights()
-            self.saveWeightsToDisk()
-            return self.weightsData
+            // Generate weights
+            return self.generateRandomWeights()
         }
     }
     
@@ -128,18 +127,16 @@ extension SketchCNNDatasource{
         guard self.useBias else{
             return nil
         }
-        
+
         let url = self.weightsPathURL.appendingPathComponent("\(self.name)_bias.data")
-        
+
         do{
             print("loading bias terms \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
             print("Generating bias \(error)")
-            // Generate bias terms and save to disk to avoid regenerated them duing subsequent calls to load
-            self.biasTermsData = self.generateBiasTerms()
-            self.saveBiasTermsToDisk()
-            return self.biasTermsData
+            // Generate bias terms
+            return self.generateBiasTerms()
         }
     }
     
@@ -153,17 +150,8 @@ extension SketchCNNDatasource{
         
         var randomWeights = Array<Float>(repeating: 0, count: count)
         
-        for o in 0..<self.outputFeatureChannels{
-            for ky in 0..<self.kernelSize.height{
-                for kx in 0..<self.kernelSize.width{
-                    for i in 0..<self.inputFeatureChannels{
-                        let index = ((o * self.kernelSize.height + ky)
-                            * self.kernelSize.width + kx)
-                            * self.inputFeatureChannels + i
-                        randomWeights[index] = Float.getRandom(mean: 0.0, std: 0.01)
-                    }
-                }
-            }
+        for index in 0..<count{
+            randomWeights[index] = Float.random(in: 0...0.01)
         }
         
         return Data(fromArray:randomWeights)

@@ -5,8 +5,8 @@ import MetalPerformanceShaders
 public class DataLoader{
     
     public let channelFormat = MPSImageFeatureChannelFormat.unorm8
-    public let imageWidth  = 256
-    public let imageHeight = 256
+    public let imageWidth  = 128
+    public let imageHeight = 128
     public let featureChannels = 1
     public var numberOfClasses : Int = 0
     
@@ -33,6 +33,12 @@ public class DataLoader{
         return imageDescriptor
     }()
     
+    var count : Int{
+        return self.sketchFileUrls.reduce(0, { total, kvp in
+            return total + kvp.value.count
+        })
+    }
+    
     let device : MTLDevice
     public let batchSize : Int
     let sourcePathURL : URL
@@ -53,9 +59,9 @@ public class DataLoader{
     
     public init(device:MTLDevice,
                 sourcePathURL:URL,
-                batchSize:Int=32){
+                batchSize:Int=66){
         
-        self.device = device 
+        self.device = device
         self.sourcePathURL = sourcePathURL
         self.batchSize = batchSize
         
@@ -63,7 +69,7 @@ public class DataLoader{
         
         setLabels()
         
-        self.numberOfClasses = self.sketchFileUrls.count 
+        self.numberOfClasses = self.sketchFileUrls.count
     }
     
     private func fetchSketchUrls(){
@@ -139,9 +145,14 @@ extension DataLoader{
         self.mpsImagePoolIndex = 0
     }
     
-    public func getNextBatch() -> Batch?{
-        if self.mpsImagePool.count < self.batchSize{
-            //self.initMpsImagePool()
+    public func hasNext() -> Bool{
+        let range = self.currentIndex..<(self.count - self.currentIndex)
+        return range.count >= self.batchSize
+    }
+    
+    public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
+        if self.mpsImagePool.count < self.poolSize{
+            self.initMpsImagePool()
         }
         
         var batchImages = [MPSImage]()
@@ -170,30 +181,33 @@ extension DataLoader{
                 // get a unsafe pointer to our image data
                 let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
                 
-                let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
+                //let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
+                //                let mpsImage = MPSTemporaryImage(
+                //                    commandBuffer: commandBuffer,
+                //                    imageDescriptor: self.imageDescriptor)
                 
                 // update the data of the associated MPSImage object (with the image data)
-//                self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
-//                    dataPointer,
-//                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-//                    imageIndex: 0)
-                
-                mpsImage.writeBytes(
+                self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
                     dataPointer,
                     dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
                     imageIndex: 0)
                 
+                //                mpsImage.writeBytes(
+                //                    dataPointer,
+                //                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
+                //                    imageIndex: 0)
+                
                 // add label and image to our batch
                 batchLabels.append(vecLabel)
-//                batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
+                batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
                 
-                batchImages.append(mpsImage)
+                //batchImages.append(mpsImage)
                 
                 // increase pointer to our pool
                 self.mpsImagePoolIndex += 1
                 self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
                 
-                // check if we need to stop 
+                // check if we need to stop
                 if batchImages.count >= self.batchSize{
                     break outerLoop
                 }
@@ -213,11 +227,11 @@ extension DataLoader{
         if self.sketchFileUrls[label] == nil{
             return nil
         }
-    
+        
         guard let labelIndex = self.labels.firstIndex(of: label) else{
             return nil
         }
-    
+        
         var labelVec = [Float](repeating: 0, count: self.numberOfClasses)
         labelVec[labelIndex] = 1
         

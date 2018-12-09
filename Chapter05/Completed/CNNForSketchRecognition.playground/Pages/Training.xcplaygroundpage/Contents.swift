@@ -19,7 +19,13 @@ import GLKit
 import PlaygroundSupport
 
 
+let BASE_WEIGHTS_PATH = "sketch_cnn_weights"
+
 let BASE_TRAIN_PATH = "Sketches/preprocessed/train"
+
+let weightsPath = PlaygroundSupport
+    .playgroundSharedDataDirectory
+    .appendingPathComponent("\(BASE_WEIGHTS_PATH)")
 
 let trainPath = PlaygroundSupport
     .playgroundSharedDataDirectory
@@ -84,13 +90,14 @@ guard let commandQueue = device.makeCommandQueue() else{
  based on the loss (*typically the mean squared error between the **predicted value** and **actual value***).
  */
 
+
 // Create our data loader
 let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
 
 // We pass in the target shape which will be used to scale the inputs accordingly
 let targetShape = Shape(
-    width:dataLoader.imageWidth/2,
-    height:dataLoader.imageHeight/2,
+    width:dataLoader.imageWidth,
+    height:dataLoader.imageHeight,
     channels:dataLoader.featureChannels)
 
 // Create our training network
@@ -98,7 +105,8 @@ let network = SketchCNN(
     withCommandQueue: commandQueue,
     inputShape: targetShape,
     numberOfClasses: dataLoader.numberOfClasses,
-    mode:SketchCNN.NetworkMode.training)
+    weightsPathURL: weightsPath,
+    mode: .training)
 
 // Train
 print("Training will begin")

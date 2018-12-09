@@ -5,8 +5,8 @@ import MetalPerformanceShaders
 public class DataLoader{
     
     public let channelFormat = MPSImageFeatureChannelFormat.unorm8
-    public let imageWidth  = 256
-    public let imageHeight = 256
+    public let imageWidth  = 128
+    public let imageHeight = 128
     public let featureChannels = 1
     public var numberOfClasses : Int = 0
     
@@ -59,7 +59,7 @@ public class DataLoader{
     
     public init(device:MTLDevice,
                 sourcePathURL:URL,
-                batchSize:Int=16){
+                batchSize:Int=66){
         
         self.device = device
         self.sourcePathURL = sourcePathURL
