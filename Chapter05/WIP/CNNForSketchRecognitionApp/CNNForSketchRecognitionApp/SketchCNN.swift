@@ -43,12 +43,12 @@ public class SketchCNN{
                 device: self.device,
                 learningRate: 0.001)
             
+            self.optimizer!.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
+            
             self.graph = self.createTrainingGraph()
         } else{
             self.graph = self.createInferenceGraph()
         }
-        
-        //print(graph!.debugDescription)
     }
 }
 
@@ -73,12 +73,14 @@ extension SketchCNN{
             strideSize: strideSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: self.optimizer)
+            optimizer: MPSNNOptimizerStochasticGradientDescent(device: self.device, learningRate: 0.001))
+        
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
                 device: self.device,
                 cnnConvolutionDescriptor: datasource.descriptor())
+
         }
         
         self.datasources.append(datasource)
@@ -121,7 +123,7 @@ extension SketchCNN{
             kernelSize: kernelSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: self.optimizer)
+            optimizer: MPSNNOptimizerStochasticGradientDescent(device: self.device, learningRate: 0.001))
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
@@ -135,7 +137,6 @@ extension SketchCNN{
             source: x,
             weights: datasource)
         
-//        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
         fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
         
         if !includeActivation{
@@ -181,9 +182,7 @@ extension SketchCNN{
                     }
                     
                     let oi = outputImage!
-                    print("Output image w \(oi.width), h \(oi.height), c \(oi.featureChannels), no. \(oi.numberOfImages)")
-//                    let texture = oi.texture
-                    
+                    print("Output image w \(oi.width), h \(oi.height), c \(oi.featureChannels), no. \(oi.numberOfImages)")                    
                     
                     handler(Array<Float>(probs[0..<self.numberOfClasses]))
                     return
@@ -235,7 +234,7 @@ extension SketchCNN{
             inputFeatureChannels: 32,
             outputFeatureChannels: 32,
             includeMaxPooling: true,
-            poolSize: 2)
+            poolSize: 2)        
         
         // OUTPUT = 32x32x32
         
@@ -290,10 +289,11 @@ extension SketchCNN{
         
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         
-        guard let graph = MPSNNGraph(device: device,
-                                     resultImage: softmax.resultImage,
-                                     resultImageIsNeeded: true) else{
-                                        return nil
+        guard let graph = MPSNNGraph(
+            device: device,
+            resultImage: softmax.resultImage,
+            resultImageIsNeeded: true) else{
+                return nil
         }
         
         return graph
@@ -305,7 +305,7 @@ extension SketchCNN{
     @discardableResult
     public func train(
         withDataLoader dataLoader:DataLoader,
-        epochs : Int = 100,
+        epochs : Int = 10,
         completionHandler handler: @escaping () -> Void) -> Bool{
         
         let trainingSemaphore = DispatchSemaphore(value:2)
@@ -315,27 +315,30 @@ extension SketchCNN{
         for epoch in 1...epochs{
             dataLoader.reset()
             
-            while dataLoader.hasNext(){
-                autoreleasepool{
-                    latestCommandBuffer = self.trainStep(
-                        withDataLoader:dataLoader,
-                        semaphore:trainingSemaphore)
+            //autoreleasepool{
+                while dataLoader.hasNext(){
+                        latestCommandBuffer = self.trainStep(
+                            withDataLoader:dataLoader,
+                            semaphore:trainingSemaphore)
+                    
+                    break
                 }
-            }
-            
-            // wait for training to complete
-            if latestCommandBuffer?.status != .completed{
-                latestCommandBuffer?.waitUntilCompleted()
-            }
+                
+                // wait for training to complete
+                if latestCommandBuffer?.status != .completed{
+                    latestCommandBuffer?.waitUntilCompleted()
+                }
+            //}
             
             // progressively save weights (always good practice)
             if epoch % 5 == 0{
                 print("Finished epoch \(epoch)")
-                updateDatasources()
+                //updateDatasources()
             }
             
             // reset the current index of the data loader
             dataLoader.reset()
+            break
         }
         
         updateDatasources()
@@ -346,7 +349,7 @@ extension SketchCNN{
     }
     
     private func trainStep(withDataLoader dataLoader:DataLoader, semaphore:DispatchSemaphore) -> MTLCommandBuffer?{
-        let _ = semaphore.wait(timeout: .distantFuture)
+        //let _ = semaphore.wait(timeout: .distantFuture)
         
         guard let graph = self.graph else{
             semaphore.signal()
@@ -364,31 +367,22 @@ extension SketchCNN{
             semaphore.signal()
             return nil
         }
-        
-        //graph.encodeBatch(to: <#T##MTLCommandBuffer#>, sourceImages: <#T##[[MPSImage]]#>, sourceStates: <#T##[[MPSState]]?#>)
-        
-        //graph.encodeBatch(to: <#T##MTLCommandBuffer#>, sourceImages: <#T##[[MPSImage]]#>, sourceStates: <#T##[[MPSState]]?#>)
 
+//        for i in 0..<batch.images.count{
+//            graph.encode(
+//                to: commandBuffer,
+//                sourceImages: [batch.images[i]],
+//                sourceStates: [batch.labels[i]],
+//                intermediateImages: nil,
+//                destinationStates: nil)
+//        }
         
-        for i in 0..<batch.images.count{
-            graph.encode(
-                to: commandBuffer,
-                sourceImages: [batch.images[i]],
-                sourceStates: [batch.labels[i]],
-                intermediateImages: nil,
-                destinationStates: nil)
-        }
+        graph.encodeBatch(to: commandBuffer,
+                          sourceImages: [batch.images],
+                          sourceStates: [batch.labels],
+                          intermediateImages: nil,
+                          destinationStates: nil)
         
-//        let output = graph.encodeBatch(to: commandBuffer,
-//                          sourceImages: [batch.images],
-//                          sourceStates: [batch.labels],
-//                          intermediateImages: nil,
-//                          destinationStates: nil)
-        
-//        let output = graph.encodeBatch(
-//            to: commandBuffer,
-//            sourceImages: [batch.images],
-//            sourceStates: [batch.labels])
         
         commandBuffer.addCompletedHandler({ (commandBuffer) in
 //            if let output = output{
@@ -400,6 +394,12 @@ extension SketchCNN{
         })
         
         commandBuffer.commit()
+        
+//        if let output = output{
+//            print("output \(output.width) \(output.height) \(output.featureChannels) \(output.numberOfImages)")
+//        }
+        
+        commandBuffer.waitUntilCompleted()
         
         return commandBuffer
     }
@@ -416,6 +416,23 @@ extension SketchCNN{
         
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
+        
+        /// DEV
+        guard let commandBuffer2 = self.commandQueue.makeCommandBuffer() else{
+            return
+        }
+
+        let wb = self.datasources[0].cnnConvolution!.exportWeightsAndBiases(with: commandBuffer2, resultStateCanBeTemporary: false)
+        
+        wb.synchronize(on: commandBuffer2)
+
+        commandBuffer2.commit()
+        commandBuffer2.waitUntilCompleted()
+
+        let tmp = wb.weights.toArray(type: Float.self)
+        print(wb.weights.debugDescription)
+        print("Weights saved  ... \(tmp.count) ... \(tmp[0...10])")
+        ///
         
         for datasource in self.datasources{
             datasource.updateAndSaveParametersToDisk()
@@ -540,41 +557,68 @@ extension SketchCNN{
         let _ = layer6Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
+            /**
+                    MPSCNNConvolutionGradientNode.MPSNNTrainingStyle controls where you want your update to happen.Provide implementation
+                    of this function for CPU side update.
+                 **/
+            
+//            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+//                cnnGradientNode.trainingStyle = .updateDeviceCPU
+//            }
+            
             return gradientNode
         }
         
         let _ = layer5Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
             return gradientNode
         }
         
         let _ = layer4Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
             return gradientNode
         }
         
         let _ = layer3Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
             return gradientNode
         }
         
         let _ = layer2Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
             return gradientNode
         }
         
         let _ = layer1Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            gradientNode.resultImage.format = .float32
+            
             return gradientNode
         }
         
-        return MPSNNGraph(device: self.device,
-                          resultImage: lastResultImage,
-                          resultImageIsNeeded: true)
+        if let graph = MPSNNGraph(
+            device: self.device,
+            resultImage: lastResultImage,
+            resultImageIsNeeded: false){
+            
+            return graph
+        }
+        
+        return nil
     }
 }

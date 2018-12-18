@@ -22,6 +22,9 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     
     let useBias : Bool
     
+    var tmpUpdateCount = 0
+    var cnnConvolution : MPSCNNConvolution?
+    
     lazy var cnnDescriptor : MPSCNNConvolutionDescriptor = {
         var descriptor = MPSCNNConvolutionDescriptor(
             kernelWidth: self.kernelSize.width,
@@ -105,7 +108,15 @@ extension SketchCNNDatasource{
     
     func load() -> Bool {
         self.weightsData = self.loadWeights()
-        self.biasTermsData = self.loadBiasTerms()        
+        self.biasTermsData = self.loadBiasTerms()
+        
+        if let weights = self.weightsData?.toArray(type: Float.self){
+            print("Weights loaded \(self.name) ... \(weights.count) ... \(weights[0...10])")
+        }
+        
+        if let bias = self.biasTermsData?.toArray(type: Float.self){
+            print("Bias Weights loaded \(self.name) ... \(bias.count) ... \(bias[0...10])")
+        }
         
         return self.weightsData != nil
     }
@@ -114,10 +125,8 @@ extension SketchCNNDatasource{
         let url = self.weightsPathURL.appendingPathComponent("\(self.name)_conv.data")
         
         do{
-            print("loading weights \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
-            print("Generating weights \(error)")
             // Generate weights
             return self.generateRandomWeights()
         }
@@ -131,10 +140,8 @@ extension SketchCNNDatasource{
         let url = self.weightsPathURL.appendingPathComponent("\(self.name)_bias.data")
 
         do{
-            print("loading bias terms \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
-            print("Generating bias \(error)")
             // Generate bias terms
             return self.generateBiasTerms()
         }
@@ -145,8 +152,6 @@ extension SketchCNNDatasource{
             * self.kernelSize.height
             * self.kernelSize.width
             * self.inputFeatureChannels
-        
-        print("Generating weights for \(self.name) size = \(count)")
         
         var randomWeights = Array<Float>(repeating: 0, count: count)
         
@@ -159,8 +164,6 @@ extension SketchCNNDatasource{
     
     private func generateBiasTerms() -> Data?{
         let weightsCount = self.outputFeatureChannels
-        
-        print("Generating bias terms for \(self.name) size = \(weightsCount)")
         
         let biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
         
@@ -176,8 +179,23 @@ extension SketchCNNDatasource{
     func update(with gradientState: MPSCNNConvolutionGradientState,
                 sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
         
+        if self.name == "l1"{
+            let tmp = sourceState.weights.toArray(type: Float.self)
+            print("Weights saved \(self.name) ... \(tmp.count) ... \(tmp[0...10])")
+            
+            let tmp2 = gradientState.gradientForWeights.toArray(type: Float.self)
+            print("Gradient weights saved \(self.name) ... \(tmp2.count) ... \(tmp2[0...10])")
+        }
         
-        return false
+        if self.name == "l6"{
+            let tmp = sourceState.weights.toArray(type: Float.self)
+            print("Weights saved \(self.name) ... \(tmp.count) ... \(tmp[0...10])")
+            
+            let tmp2 = gradientState.gradientForWeights.toArray(type: Float.self)
+            print("Gradient weights saved \(self.name) ... \(tmp2.count) ... \(tmp2[0...10])")
+        }
+        
+        return true
     }
     
     // Update called when training on the GPU
@@ -190,12 +208,31 @@ extension SketchCNNDatasource{
                 return nil
         }
         
+        /// DEV
+        tmpUpdateCount += 1
+        self.cnnConvolution = gradientState.convolution
+        ///
+        
+//        /// DEV
+//        sourceState.readCount += 1
+//
+//        optimizer.encode(
+//            commandBuffer: commandBuffer,
+//            convolutionGradientState: gradientState,
+//            convolutionSourceState: sourceState,
+//            inputMomentumVectors: nil,
+//            resultState: sourceState)
+//        ///
+        
         optimizer.encode(
             commandBuffer: commandBuffer,
             convolutionGradientState: gradientState,
             convolutionSourceState: sourceState,
             inputMomentumVectors: nil,
             resultState: weightsAndBiasesState)
+        
+//        gradientState.readCount -= 1
+//        sourceState.readCount -= 1
         
         return weightsAndBiasesState
     }
@@ -205,7 +242,17 @@ extension SketchCNNDatasource{
             return
         }
         
+        print("\(self.name) updatted \(self.tmpUpdateCount) times")
+        
         weightsAndBiasesState.synchronize(on: commandBuffer)
+        
+//        let wtsCount = Int(weightsAndBiasesState.weights.length / MemoryLayout<Float>.stride)
+//        //weightsAndBiasesState.weights.length // length of the buffer in bytes
+//
+//        let result = weightsAndBiasesState.weights.contents().bindMemory(to: Float.self, capacity: wtsCount)
+//        var data = [Float](repeating:0, count: wtsCount)
+//        for i in 0 ..< wtsCount { data[i] = result[i] }
+//        print("done")
     }
 }
 
@@ -235,6 +282,10 @@ extension SketchCNNDatasource{
             return
         }
         
+        let tmp = weightsAndBiasesState.weights.toArray(type: Float.self)
+        print(weightsAndBiasesState.weights.debugDescription) 
+        print("Weights saved \(self.name) ... \(tmp.count) ... \(tmp[0...10])")                
+        
         self.weightsData = Data(fromArray:weightsAndBiasesState.weights.toArray(type: Float.self))
         
         if let biasData = weightsAndBiasesState.biases {
@@ -247,7 +298,8 @@ extension SketchCNNDatasource{
     
     @discardableResult
     func saveToDisk() -> Bool{
-        return self.saveWeightsToDisk() && self.saveBiasTermsToDisk()
+        //return self.saveWeightsToDisk() && self.saveBiasTermsToDisk()
+        return true
     }
     
     @discardableResult

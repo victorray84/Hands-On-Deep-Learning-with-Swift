@@ -9,3 +9,5 @@ public typealias Batch = (images:[MPSImage], labels:[MPSCNNLossLabels])
 public typealias KernelSize = (width:Int, height:Int)
 
 public typealias Shape = (width:Int, height:Int, channels:Int)
+
+public typealias SampleLookup = (label:String, index:Int)

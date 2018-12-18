@@ -9,6 +9,10 @@ public class DataLoader{
     public let imageHeight = 128
     public let featureChannels = 1
     public var numberOfClasses : Int = 0
+    public var shuffle : Bool = false
+    
+    // Used to create the batches; populated each time the batch is reset
+    private var batchPool = [SampleLookup]()
     
     var sketchFileUrls = [String:[URL]]()
     
@@ -59,7 +63,7 @@ public class DataLoader{
     
     public init(device:MTLDevice,
                 sourcePathURL:URL,
-                batchSize:Int=66){
+                batchSize:Int=4){
         
         self.device = device
         self.sourcePathURL = sourcePathURL
@@ -68,6 +72,8 @@ public class DataLoader{
         fetchSketchUrls()
         
         setLabels()
+        
+        populateBatchPool()
         
         self.numberOfClasses = self.sketchFileUrls.count
     }
@@ -105,6 +111,122 @@ public class DataLoader{
     }
 }
 
+// MARK: - Sample methods
+
+extension DataLoader{
+    
+    private func initMpsImagePool(){
+        self.mpsImagePool.removeAll()
+        
+        let descriptor = self.imageDescriptor
+        for _ in 0..<self.poolSize{
+            self.mpsImagePool.append(MPSImage(device: self.device, imageDescriptor: descriptor))
+        }
+    }
+    
+    private func populateBatchPool(){
+        batchPool.removeAll()
+        
+        // Keep track of how many we have added per label
+        var labelCounts = [String:Int]()
+        
+        // batchPool with all tuples of image labels and indicies pairs
+        var hasChanged = true
+        while hasChanged{
+            hasChanged = false
+            for label in self.labels{
+                let currentCount = labelCounts[label] ?? 0
+                if currentCount >= self.sketchFileUrls[label]!.count{
+                    continue // ignore
+                }
+                hasChanged = true // flag that we have changed
+                batchPool.append(SampleLookup(label:label, index:currentCount))
+                labelCounts[label] = currentCount + 1
+            }
+        }
+        
+        if self.shuffle{
+            batchPool.shuffle()
+        }
+    }
+    
+    public func reset(){
+        self.currentIndex = 0
+        self.mpsImagePoolIndex = 0
+        
+        self.populateBatchPool()
+    }
+    
+    public func hasNext() -> Bool{
+        return (self.batchPool.count - (self.currentIndex + self.batchSize)) >= 0
+    }
+    
+    public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
+        if self.mpsImagePool.count < self.poolSize{
+            self.initMpsImagePool()
+        }
+        
+        //var batchImages = [MPSImage]()
+        var batchImages = [MPSImage]() 
+        var batchLabels = [MPSCNNLossLabels]()
+        
+        // Get current batch range
+        let range = self.currentIndex..<(self.currentIndex + self.batchSize)
+        // Get slice
+        let batchLookups = self.batchPool[range]
+        // Advance index
+        self.currentIndex += self.batchSize
+        
+        // Populate batch
+        for batchLookup in batchLookups{
+            // vectorise label
+            guard let vecLabel = self.vectorizeLabel(label: batchLookup.label) else{
+                fatalError("No image found for label \(batchLookup.label)")
+            }
+            
+            // get the image for a specific label and index
+            guard let imageData = self.loadImageData(forLabel: batchLookup.label, atIndex: batchLookup.index) else{
+                fatalError("No image found for label \(batchLookup.label) at index \(batchLookup.index)")
+            }
+            
+            // get a unsafe pointer to our image data
+            let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
+            
+            //                let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
+            
+            //                let mpsImage = MPSTemporaryImage(
+            //                    commandBuffer: commandBuffer,
+            //                    imageDescriptor: self.imageDescriptor)
+            
+            // update the data of the associated MPSImage object (with the image data)
+            self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
+                dataPointer,
+                dataLayout: MPSDataLayout.featureChannelsxHeightxWidth,
+                imageIndex: 0)
+            
+            //                mpsImage.writeBytes(
+            //                    dataPointer,
+            //                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
+            //                    imageIndex: 0)
+            
+            // add label and image to our batch
+            batchLabels.append(vecLabel)
+            batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
+            //                batchImages.append(mpsImage)
+            
+            // increase pointer to our pool
+            self.mpsImagePoolIndex += 1
+            self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
+        }
+        
+        if batchImages.count == 0 || batchImages.count != batchLabels.count{
+            return nil
+        }
+        
+        return Batch(images:batchImages, labels:batchLabels)
+    }
+}
+
 // MARK: - Image loading
 
 extension DataLoader{
@@ -127,101 +249,9 @@ extension DataLoader{
     
 }
 
-// MARK: - Sample methods
+// MARK: - Label encoding
 
 extension DataLoader{
-    
-    private func initMpsImagePool(){
-        self.mpsImagePool.removeAll()
-        
-        let descriptor = self.imageDescriptor
-        for _ in 0..<self.poolSize{
-            self.mpsImagePool.append(MPSImage(device: self.device, imageDescriptor: descriptor))
-        }
-    }
-    
-    public func reset(){
-        self.currentIndex = 0
-        self.mpsImagePoolIndex = 0
-    }
-    
-    public func hasNext() -> Bool{
-        let range = self.currentIndex..<(self.count - self.currentIndex)
-        return range.count >= self.batchSize
-    }
-    
-    public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
-        if self.mpsImagePool.count < self.poolSize{
-            self.initMpsImagePool()
-        }
-        
-        var batchImages = [MPSImage]()
-        var batchLabels = [MPSCNNLossLabels]()
-        
-        var sampleAdded = true // flag to indicate if sample has been added or not (for early stopping)
-        
-        outerLoop: while batchImages.count < self.batchSize && sampleAdded{
-            sampleAdded = false
-            
-            for label in self.labels{
-                // vectorise label
-                guard let vecLabel = self.vectorizeLabel(label: label) else{
-                    fatalError("No image found for label \(label) found")
-                }
-                
-                // get the image for a specific label and index
-                guard let imageData = self.loadImageData(forLabel: label, atIndex: self.currentIndex) else{
-                    //print("No image found for label \(label) at index \(self.currentIndex)")
-                    continue
-                }
-                
-                // flag that we have added a sample
-                sampleAdded = true
-                
-                // get a unsafe pointer to our image data
-                let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
-                
-                //let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
-//                let mpsImage = MPSTemporaryImage(
-//                    commandBuffer: commandBuffer,
-//                    imageDescriptor: self.imageDescriptor)
-                
-                // update the data of the associated MPSImage object (with the image data)
-                self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
-                    dataPointer,
-                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-                    imageIndex: 0)
-                
-//                mpsImage.writeBytes(
-//                    dataPointer,
-//                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-//                    imageIndex: 0)
-                
-                // add label and image to our batch
-                batchLabels.append(vecLabel)
-                batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
-                
-                //batchImages.append(mpsImage)
-                
-                // increase pointer to our pool
-                self.mpsImagePoolIndex += 1
-                self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
-                
-                // check if we need to stop
-                if batchImages.count >= self.batchSize{
-                    break outerLoop
-                }
-            }
-            
-            self.currentIndex += 1
-        }
-        
-        if batchImages.count == 0 || batchImages.count != batchLabels.count{
-            return nil
-        }
-        
-        return Batch(images:batchImages, labels:batchLabels)
-    }
     
     public func vectorizeLabel(label:String) -> MPSCNNLossLabels?{
         if self.sketchFileUrls[label] == nil{
@@ -239,7 +269,7 @@ extension DataLoader{
         
         guard let labelDesc = MPSCNNLossDataDescriptor(
             data: labelData,
-            layout: MPSDataLayout.HeightxWidthxFeatureChannels,
+            layout: MPSDataLayout.featureChannelsxHeightxWidth,
             size: MTLSize(width: 1, height: 1, depth: self.numberOfClasses)) else{
                 return nil
         }
@@ -252,5 +282,4 @@ extension DataLoader{
         
         return lossLabel
     }
-    
 }

@@ -14,8 +14,8 @@ class ViewController: NSViewController {
         super.viewDidLoad()
 
         // Do any additional setup after loading the view.
-//        Trainer.train()
-        Trainer.validate()
+        Trainer.train()
+//        Trainer.validate()
     }
 
     override var representedObject: Any? {

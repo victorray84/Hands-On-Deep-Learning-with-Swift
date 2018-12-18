@@ -64,7 +64,7 @@ class Trainer{
          */
         
         // Create our data loader
-        let dataLoader = DataLoader(device: device, sourcePathURL: validPath)
+        let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize:1)
         
         // We pass in the target shape which will be used to scale the inputs accordingly
         //        let targetShape = Shape(
@@ -83,30 +83,32 @@ class Trainer{
         var correctCount = 0.0
         var count = 0.0
         
-        autoreleasepool{
-            guard let commandBuffer = commandQueue.makeCommandBuffer() else{
-                fatalError()
-            }
-            
-            if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
-                for i in 0..<batch.images.count{
-                    let img = batch.images[i]
-                    let label = batch.labels[i]
-                    let actualClass = label.label ?? ""
-                    
-                    network.predict(x: img) { (probs) in
+        for _ in 0..<10{
+            autoreleasepool{
+                guard let commandBuffer = commandQueue.makeCommandBuffer() else{
+                    fatalError()
+                }
+                
+                if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
+                    for i in 0..<batch.images.count{
+                        let img = batch.images[i]
+                        let label = batch.labels[i]
+                        let actualClass = label.label ?? ""
                         
-                        if let probs = probs{
-//                            print("Probabilities \(probs)")
-                            let predictedClass = dataLoader.labels[probs.argmax]
+                        network.predict(x: img) { (probs) in
                             
-                            count += 1.0
-                            correctCount += predictedClass == actualClass ? 1.0 : 0.0
-                            
-                            print("\tPrediction \(predictedClass); Actual \(actualClass); Accuracy \(correctCount/count)")
-                            
-                            count += 1.0
-                            correctCount += predictedClass == actualClass ? 1.0 : 0.0
+                            if let probs = probs{
+                                //                            print("Probabilities \(probs)")
+                                let predictedClass = dataLoader.labels[probs.argmax]
+                                
+                                count += 1.0
+                                correctCount += predictedClass == actualClass ? 1.0 : 0.0
+                                
+                                print("\tPrediction \(predictedClass); Actual \(actualClass); Accuracy \(correctCount/count)")
+                                
+                                count += 1.0
+                                correctCount += predictedClass == actualClass ? 1.0 : 0.0
+                            }
                         }
                     }
                 }
