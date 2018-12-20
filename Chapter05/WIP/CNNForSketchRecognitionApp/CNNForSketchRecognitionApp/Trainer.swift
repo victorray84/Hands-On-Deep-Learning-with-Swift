@@ -173,10 +173,10 @@ class Trainer{
             mode:SketchCNN.NetworkMode.training)
         
         // Train
-        print("Training will begin")
+        print("=== Training will begin ===")
         
-        network.train(withDataLoader: dataLoader) {
-            print("Training did finish")
+        network.train(withDataLoaderForTraining: dataLoader) {
+            print("=== Training did finish ===")
         }
     }
 }

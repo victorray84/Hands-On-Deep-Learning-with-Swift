@@ -41,11 +41,13 @@ public class SketchCNN{
         if mode == .training{
             self.optimizer = MPSNNOptimizerStochasticGradientDescent(
                 device: self.device,
-                learningRate: 0.001)
+                learningRate: 0.01)
             
             self.optimizer!.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
             
             self.graph = self.createTrainingGraph()
+            
+            //print(self.graph!.debugDescription)
         } else{
             self.graph = self.createInferenceGraph()
         }
@@ -73,15 +75,18 @@ extension SketchCNN{
             strideSize: strideSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: MPSNNOptimizerStochasticGradientDescent(device: self.device, learningRate: 0.001))
+            optimizer: self.optimizer)
         
-        
-        if self.mode == .training{
-            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
-                device: self.device,
-                cnnConvolutionDescriptor: datasource.descriptor())
-
-        }
+//        if self.mode == .training{
+//            if datasource.load(){
+//                let weights = self.device.makeBuffer(
+//                    bytes: datasource.weights(),
+//                    length: datasource.size, options: <#T##MTLResourceOptions#>)
+//                datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
+//                    device: self.device,
+//                    cnnConvolutionDescriptor: datasource.descriptor())
+//            }
+//        }
         
         self.datasources.append(datasource)
         
@@ -123,7 +128,7 @@ extension SketchCNN{
             kernelSize: kernelSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: MPSNNOptimizerStochasticGradientDescent(device: self.device, learningRate: 0.001))
+            optimizer: self.optimizer)
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
@@ -149,7 +154,10 @@ extension SketchCNN{
             return [fc, relu]
         }
         
-        let dropout = MPSCNNDropoutNode(source: relu.resultImage, keepProbability: (1.0 - dropoutProbability))
+        let dropout = MPSCNNDropoutNode(
+            source: relu.resultImage,
+            keepProbability: (1.0 - dropoutProbability))
+        
         return [fc, relu, dropout]
     }
     
@@ -304,44 +312,65 @@ extension SketchCNN{
     
     @discardableResult
     public func train(
-        withDataLoader dataLoader:DataLoader,
-        epochs : Int = 10,
+        withDataLoaderForTraining trainingDataLoader:DataLoader,
+        dataLoaderForValidation:DataLoader? = nil,
+        epochs : Int = 1,
         completionHandler handler: @escaping () -> Void) -> Bool{
         
         let trainingSemaphore = DispatchSemaphore(value:2)
         
-        var latestCommandBuffer : MTLCommandBuffer?
-        
-        for epoch in 1...epochs{
-            dataLoader.reset()
+        autoreleasepool{
+            var latestCommandBuffer : MTLCommandBuffer?
             
-            //autoreleasepool{
-                while dataLoader.hasNext(){
-                        latestCommandBuffer = self.trainStep(
-                            withDataLoader:dataLoader,
-                            semaphore:trainingSemaphore)
-                    
-                    break
+            for epoch in 1...epochs{
+                trainingDataLoader.reset()
+                
+                while trainingDataLoader.hasNext(){
+                    latestCommandBuffer = self.trainStep(
+                        withDataLoader: trainingDataLoader,
+                        semaphore: trainingSemaphore)
                 }
                 
-                // wait for training to complete
-                if latestCommandBuffer?.status != .completed{
-                    latestCommandBuffer?.waitUntilCompleted()
-                }
-            //}
-            
-            // progressively save weights (always good practice)
-            if epoch % 5 == 0{
                 print("Finished epoch \(epoch)")
-                //updateDatasources()
             }
-            
-            // reset the current index of the data loader
-            dataLoader.reset()
-            break
         }
         
+        print("Finished training")
         updateDatasources()
+        
+//            for epoch in 1...epochs{
+//                trainingDataLoader.reset()
+//
+//                    while trainingDataLoader.hasNext(){
+//                            latestCommandBuffer = self.trainStep(
+//                                withDataLoader:trainingDataLoader,
+//                                semaphore:trainingSemaphore)
+//                    }
+//
+//                    // wait for training to complete
+//                    if latestCommandBuffer?.status != .completed{
+//                        latestCommandBuffer?.waitUntilCompleted()
+//                    }
+//
+//                print("Finished epoch \(epoch)")
+//                updateDatasources()
+        
+                // progressively save weights (always good practice)
+//                if epoch % 5 == 0{
+//                    print("Finished epoch \(epoch)")
+//                    updateDatasources()
+//                }
+                
+                /// DEV
+//                print("Finished epoch \(epoch)")
+//                updateDatasources()
+                ///
+                // reset the current index of the data loader
+//                trainingDataLoader.reset()
+//                }
+//        }
+//
+//        updateDatasources()
         
         handler()
         
@@ -367,15 +396,6 @@ extension SketchCNN{
             semaphore.signal()
             return nil
         }
-
-//        for i in 0..<batch.images.count{
-//            graph.encode(
-//                to: commandBuffer,
-//                sourceImages: [batch.images[i]],
-//                sourceStates: [batch.labels[i]],
-//                intermediateImages: nil,
-//                destinationStates: nil)
-//        }
         
         graph.encodeBatch(to: commandBuffer,
                           sourceImages: [batch.images],
@@ -385,19 +405,10 @@ extension SketchCNN{
         
         
         commandBuffer.addCompletedHandler({ (commandBuffer) in
-//            if let output = output{
-//                print("count \(output.count) size:\(output[0].width)x\(output[0].height) channels:\(output[0].featureChannels) num of images\(output[0].numberOfImages)")
-////                print(output[0].toFloatArray())
-//            }
-            
             semaphore.signal()
         })
         
         commandBuffer.commit()
-        
-//        if let output = output{
-//            print("output \(output.width) \(output.height) \(output.featureChannels) \(output.numberOfImages)")
-//        }
         
         commandBuffer.waitUntilCompleted()
         
@@ -409,33 +420,66 @@ extension SketchCNN{
         guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
             return
         }
-        
+
         for datasource in self.datasources{
             datasource.synchronizeParameters(on: commandBuffer)
         }
-        
+
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
         /// DEV
-        guard let commandBuffer2 = self.commandQueue.makeCommandBuffer() else{
-            return
-        }
-
-        let wb = self.datasources[0].cnnConvolution!.exportWeightsAndBiases(with: commandBuffer2, resultStateCanBeTemporary: false)
+//        for datasource in self.datasources{
+////            guard let cb = self.commandQueue.makeCommandBuffer() else{
+////                continue
+////            }
+////
+////            let wb = datasource.cnnConvolution!.exportWeightsAndBiases(
+////                with: cb,
+////                resultStateCanBeTemporary: false)
+////
+////            wb.synchronize(on: cb)
+////
+////            cb.commit()
+////            cb.waitUntilCompleted()
+//
+//            guard let wb = datasource.weightsAndBiasesState else{
+//                continue
+//            }
+//
+//            let wtData = wb.weights.toArray(type: Float.self)
+//            let biasData = wb.biases!.toArray(type: Float.self)
+//            print("")
+//        }
+        ///
         
-        wb.synchronize(on: commandBuffer2)
-
-        commandBuffer2.commit()
-        commandBuffer2.waitUntilCompleted()
-
-        let tmp = wb.weights.toArray(type: Float.self)
-        print(wb.weights.debugDescription)
-        print("Weights saved  ... \(tmp.count) ... \(tmp[0...10])")
+        /// DEV
+//        guard let commandBuffer2 = self.commandQueue.makeCommandBuffer() else{
+//            return
+//        }
+//
+//        let wb = datasources[0].cnnConvolution!.exportWeightsAndBiases(
+//            with: commandBuffer2,
+//            resultStateCanBeTemporary: false)
+//
+//        wb.synchronize(on: commandBuffer2)
+//
+//        commandBuffer2.commit()
+//        commandBuffer2.waitUntilCompleted()
+//
+//        let data = wb.weights.toArray(type: Float.self)
+//        if data[0] == Float.nan{
+//            print("Data is nan")
+//        }
+        
+//        if let wb = self.datasources[0].weightsAndBiasesState{
+//            let data = wb.weights.toArray(type: Float.self)
+//            print(data[0..<5])
+//        }
         ///
         
         for datasource in self.datasources{
-            datasource.updateAndSaveParametersToDisk()
+            datasource.saveToDisk()
         }
     }
     
@@ -548,25 +592,29 @@ extension SketchCNN{
             lossDescriptor: lossDesc)
         
         // === Backwards pass ===
-        
+        loss.resultImage.format = .float32
         let softmaxG = softmax.gradientFilter(withSource: loss.resultImage)
         
         // Keep track of the last nodes result image to pass it to the next
         var lastResultImage = softmaxG.resultImage
+        lastResultImage.format = .float32
+        
+        // Set training style; this can be sett via the trainingStyle property of a MPSCNNConvolutionGradientNode object.
+        // Valid value are:
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceCPU (to update on tthe CPU)
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceGPU (to update on tthe GPU
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceNone (don't update this layer)
+        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
         
         let _ = layer6Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
             
-            /**
-                    MPSCNNConvolutionGradientNode.MPSNNTrainingStyle controls where you want your update to happen.Provide implementation
-                    of this function for CPU side update.
-                 **/
+            lastResultImage.format = .float32
             
-//            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
-//                cnnGradientNode.trainingStyle = .updateDeviceCPU
-//            }
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -574,7 +622,12 @@ extension SketchCNN{
         let _ = layer5Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -582,7 +635,12 @@ extension SketchCNN{
         let _ = layer4Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -590,7 +648,12 @@ extension SketchCNN{
         let _ = layer3Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -598,7 +661,12 @@ extension SketchCNN{
         let _ = layer2Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -606,7 +674,12 @@ extension SketchCNN{
         let _ = layer1Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
-            gradientNode.resultImage.format = .float32
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -615,6 +688,8 @@ extension SketchCNN{
             device: self.device,
             resultImage: lastResultImage,
             resultImageIsNeeded: false){
+            
+            graph.format = .float32
             
             return graph
         }

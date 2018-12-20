@@ -8,7 +8,6 @@ from scipy.misc import imresize, imsave
 from scipy import ndimage
 import matplotlib.pyplot as plt
 
-#TARGET_SIZE = (256,256)
 TARGET_SIZE = (128,128)
 
 BACKGROUND_COLOR = 0
@@ -97,25 +96,25 @@ def preprocess_images(source_path, dest_path):
 					flipped_img = np.fliplr(rescaled_img)
 					imsave(save_file_path, flipped_img, format='png')					
 
-				# translate
-				translated = False
-				translated_img = np.copy(rescaled_img)
+				# # translate
+				# translated = False
+				# translated_img = np.copy(rescaled_img)
 
-				if random.random() > 0.8:
-					translated_img = shift_left(translated_img)
-					translated = True
+				# if random.random() > 0.8:
+				# 	translated_img = shift_left(translated_img)
+				# 	translated = True
 
-				if random.random() > 0.8:
-					translated_img = shift_right(translated_img)
-					translated = True
+				# if random.random() > 0.8:
+				# 	translated_img = shift_right(translated_img)
+				# 	translated = True
 
-				if random.random() > 0.8:
-					translated_img = shift_up(translated_img)
-					translated = True
+				# if random.random() > 0.8:
+				# 	translated_img = shift_up(translated_img)
+				# 	translated = True
 
-				if translated:
-					save_file_path = os.path.join(os.path.join(dest_path, train_sketch_dir), "t_" + sketch_filename)
-					imsave(save_file_path, translated_img, format='png')
+				# if translated:
+				# 	save_file_path = os.path.join(os.path.join(dest_path, train_sketch_dir), "t_" + sketch_filename)
+				# 	imsave(save_file_path, translated_img, format='png')
 
 				# rotate
 				if random.random() > 0.8:

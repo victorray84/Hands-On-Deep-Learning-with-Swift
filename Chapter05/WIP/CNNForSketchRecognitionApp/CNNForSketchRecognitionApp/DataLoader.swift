@@ -8,7 +8,7 @@ public class DataLoader{
     public let imageWidth  = 128
     public let imageHeight = 128
     public let featureChannels = 1
-    public var numberOfClasses : Int = 0
+    public var numberOfClasses : Int = 22
     public var shuffle : Bool = false
     
     // Used to create the batches; populated each time the batch is reset
@@ -158,7 +158,7 @@ extension DataLoader{
     }
     
     public func hasNext() -> Bool{
-        return (self.batchPool.count - (self.currentIndex + self.batchSize)) >= 0
+        return (self.currentIndex + self.batchSize) < self.count
     }
     
     public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
@@ -192,35 +192,19 @@ extension DataLoader{
             // get a unsafe pointer to our image data
             let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
             
-            //                let mpsImage = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
-            
-            //                let mpsImage = MPSTemporaryImage(
-            //                    commandBuffer: commandBuffer,
-            //                    imageDescriptor: self.imageDescriptor)
-            
             // update the data of the associated MPSImage object (with the image data)
             self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
                 dataPointer,
-                dataLayout: MPSDataLayout.featureChannelsxHeightxWidth,
+                dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
                 imageIndex: 0)
-            
-            //                mpsImage.writeBytes(
-            //                    dataPointer,
-            //                    dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-            //                    imageIndex: 0)
             
             // add label and image to our batch
             batchLabels.append(vecLabel)
             batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
-            //                batchImages.append(mpsImage)
             
             // increase pointer to our pool
             self.mpsImagePoolIndex += 1
             self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
-        }
-        
-        if batchImages.count == 0 || batchImages.count != batchLabels.count{
-            return nil
         }
         
         return Batch(images:batchImages, labels:batchLabels)
@@ -269,7 +253,7 @@ extension DataLoader{
         
         guard let labelDesc = MPSCNNLossDataDescriptor(
             data: labelData,
-            layout: MPSDataLayout.featureChannelsxHeightxWidth,
+            layout: MPSDataLayout.HeightxWidthxFeatureChannels,
             size: MTLSize(width: 1, height: 1, depth: self.numberOfClasses)) else{
                 return nil
         }
