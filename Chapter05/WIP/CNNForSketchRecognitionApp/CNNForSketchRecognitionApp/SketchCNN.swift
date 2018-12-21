@@ -92,8 +92,10 @@ extension SketchCNN{
         
         let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
         conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        conv.label = "\(name)_conv"
         
         let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
+        relu.label = "\(name)_relu"
         
         if !includeMaxPooling{
             return [conv, relu]
@@ -101,6 +103,7 @@ extension SketchCNN{
         
         let pooling = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: poolSize)
         pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+        pooling.label = "\(name)_maxpooling"
         
         if self.mode == .inference || dropoutProbability == 0.0{
             return [conv, relu, pooling]
@@ -109,6 +112,7 @@ extension SketchCNN{
         let dropout = MPSCNNDropoutNode(
             source: pooling.resultImage,
             keepProbability: (1.0 - dropoutProbability))
+        dropout.label = "\(name)_dropout"
         
         return [conv, relu, pooling, dropout]
     }
@@ -143,12 +147,14 @@ extension SketchCNN{
             weights: datasource)
         
         fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+        fc.label = "\(name)_fc"
         
         if !includeActivation{
             return [fc]
         }
         
         let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
+        relu.label = "\(name)_relu"
         
         if self.mode == .inference || dropoutProbability == 0.0{
             return [fc, relu]
@@ -157,6 +163,7 @@ extension SketchCNN{
         let dropout = MPSCNNDropoutNode(
             source: relu.resultImage,
             keepProbability: (1.0 - dropoutProbability))
+        dropout.label = "\(name)_dropout"
         
         return [fc, relu, dropout]
     }
@@ -167,38 +174,43 @@ extension SketchCNN{
 
 extension SketchCNN{
     
-    public func predict(
-        x:MPSImage,
-        completationHandler handler: @escaping ([Float]?) -> Void) -> Void{
+    public func predict(X:[MPSImage]) -> [[Float]]?{
         
         guard let graph = self.graph else{
-            return
+            return nil
         }
         
-        graph.executeAsync(withSourceImages: [x]) { (outputImage, error) in
-            DispatchQueue.main.async {
-                if error != nil{
-                    print(error!)
-                    handler(nil)
-                    return
-                }
-                
-                if outputImage != nil{
-                    guard let probs = outputImage!.toFloatArray() else{
-                        handler(nil)
-                        return
+        if let commandBuffer = self.commandQueue.makeCommandBuffer(){
+            let outputs = graph.encodeBatch(
+                to: commandBuffer,
+                sourceImages: [X],
+                sourceStates: nil)
+            
+            // Syncronize the outputs after the prediction has been made
+            // so we can get access to the values on the CPU
+            outputs?.forEach({ (output) in
+                output.synchronize(on: commandBuffer)
+            })
+            
+            // Commit the command to the GPU
+            commandBuffer.commit()
+            
+            // Wait for it to finish
+            commandBuffer.waitUntilCompleted()
+            
+            // Process outputs
+            if let outputs = outputs{
+                let predictions = outputs.map({ (output) -> [Float] in
+                    if let probs = output.toFloatArray(){
+                        return Array<Float>(probs[0..<self.numberOfClasses])
                     }
-                    
-                    let oi = outputImage!
-                    print("Output image w \(oi.width), h \(oi.height), c \(oi.featureChannels), no. \(oi.numberOfImages)")                    
-                    
-                    handler(Array<Float>(probs[0..<self.numberOfClasses]))
-                    return
-                }
+                    return [Float]()
+                })
                 
-                handler(nil)
+                return predictions
             }
         }
+        return nil
     }
     
     private func createInferenceGraph() -> MPSNNGraph?{
@@ -296,6 +308,7 @@ extension SketchCNN{
         // OUTPUT = numberOfClasses
         
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
+        softmax.label = "output"
         
         guard let graph = MPSNNGraph(
             device: device,
@@ -410,7 +423,7 @@ extension SketchCNN{
         
         commandBuffer.commit()
         
-        commandBuffer.waitUntilCompleted()
+//        commandBuffer.waitUntilCompleted()
         
         return commandBuffer
     }
@@ -429,28 +442,28 @@ extension SketchCNN{
         commandBuffer.waitUntilCompleted()
         
         /// DEV
-//        for datasource in self.datasources{
-////            guard let cb = self.commandQueue.makeCommandBuffer() else{
-////                continue
-////            }
-////
-////            let wb = datasource.cnnConvolution!.exportWeightsAndBiases(
-////                with: cb,
-////                resultStateCanBeTemporary: false)
-////
-////            wb.synchronize(on: cb)
-////
-////            cb.commit()
-////            cb.waitUntilCompleted()
-//
-//            guard let wb = datasource.weightsAndBiasesState else{
+        for datasource in self.datasources{
+//            guard let cb = self.commandQueue.makeCommandBuffer() else{
 //                continue
 //            }
 //
-//            let wtData = wb.weights.toArray(type: Float.self)
-//            let biasData = wb.biases!.toArray(type: Float.self)
-//            print("")
-//        }
+//            let wb = datasource.cnnConvolution!.exportWeightsAndBiases(
+//                with: cb,
+//                resultStateCanBeTemporary: false)
+//
+//            wb.synchronize(on: cb)
+//
+//            cb.commit()
+//            cb.waitUntilCompleted()
+
+            guard let wb = datasource.weightsAndBiasesState else{
+                continue
+            }
+
+            let wtData = wb.weights.toArray(type: Float.self)
+            let biasData = wb.biases!.toArray(type: Float.self)
+            print("")
+        }
         ///
         
         /// DEV

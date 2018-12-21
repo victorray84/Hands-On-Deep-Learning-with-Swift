@@ -64,13 +64,7 @@ class Trainer{
          */
         
         // Create our data loader
-        let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize:1)
-        
-        // We pass in the target shape which will be used to scale the inputs accordingly
-        //        let targetShape = Shape(
-        //            width:dataLoader.imageWidth/2,
-        //            height:dataLoader.imageHeight/2,
-        //            channels:dataLoader.featureChannels)
+        let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize:10)
         
         // Create our training network
         let network = SketchCNN(
@@ -80,40 +74,33 @@ class Trainer{
             weightsPathURL:weightsPath,
             mode:SketchCNN.NetworkMode.inference)
         
-        var correctCount = 0.0
-        var count = 0.0
+        var totalPredictions : Float = 0.0
+        var correct : Float = 0.0
         
-        for _ in 0..<10{
+        while dataLoader.hasNext(){
             autoreleasepool{
                 guard let commandBuffer = commandQueue.makeCommandBuffer() else{
                     fatalError()
                 }
                 
                 if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
-                    for i in 0..<batch.images.count{
-                        let img = batch.images[i]
-                        let label = batch.labels[i]
-                        let actualClass = label.label ?? ""
+                    if let predictions = network.predict(X: batch.images){
+                        assert(predictions.count == batch.labels.count)
                         
-                        network.predict(x: img) { (probs) in
+                        for i in 0..<predictions.count{
+                            totalPredictions += 1.0
+                            let predictedClass = dataLoader.labels[predictions[i].argmax]
+                            let actualClass = batch.labels[i].label ?? ""
                             
-                            if let probs = probs{
-                                //                            print("Probabilities \(probs)")
-                                let predictedClass = dataLoader.labels[probs.argmax]
-                                
-                                count += 1.0
-                                correctCount += predictedClass == actualClass ? 1.0 : 0.0
-                                
-                                print("\tPrediction \(predictedClass); Actual \(actualClass); Accuracy \(correctCount/count)")
-                                
-                                count += 1.0
-                                correctCount += predictedClass == actualClass ? 1.0 : 0.0
-                            }
+                            correct += predictedClass == actualClass ? 1.0 : 0.0
+                            print("\tPrediction \(predictedClass); Actual \(actualClass); Accuracy \(correct/totalPredictions)")
                         }
                     }
                 }
             }
         }
+        
+        print("accuracy \(correct/totalPredictions)")
     }
     
     public static func train(){
@@ -157,12 +144,6 @@ class Trainer{
         
         // Create our data loader
         let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
-        
-        // We pass in the target shape which will be used to scale the inputs accordingly
-//        let targetShape = Shape(
-//            width:dataLoader.imageWidth/2,
-//            height:dataLoader.imageHeight/2,
-//            channels:dataLoader.featureChannels)
         
         // Create our training network
         let network = SketchCNN(
