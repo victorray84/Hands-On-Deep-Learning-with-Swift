@@ -9,7 +9,7 @@ public class DataLoader{
     public let imageHeight = 128
     public let featureChannels = 1
     public var numberOfClasses : Int = 22
-    public var shuffle : Bool = false
+    public var shuffle : Bool = true
     
     // Used to create the batches; populated each time the batch is reset
     private var batchPool = [SampleLookup]()
@@ -44,7 +44,7 @@ public class DataLoader{
     }
     
     let device : MTLDevice
-    public let batchSize : Int
+    public private(set) var batchSize : Int = 0 
     let sourcePathURL : URL
     
     private var poolSize : Int{
@@ -67,15 +67,20 @@ public class DataLoader{
         
         self.device = device
         self.sourcePathURL = sourcePathURL
-        self.batchSize = batchSize
         
         fetchSketchUrls()
         
+        if batchSize <= 0{
+            self.batchSize = self.count
+        } else{
+            self.batchSize = batchSize
+        }
+        
         setLabels()
         
-        populateBatchPool()
-        
         self.numberOfClasses = self.sketchFileUrls.count
+        
+        self.reset()
     }
     
     private func fetchSketchUrls(){
@@ -158,7 +163,7 @@ extension DataLoader{
     }
     
     public func hasNext() -> Bool{
-        return (self.currentIndex + self.batchSize) < self.count
+        return (self.currentIndex + self.batchSize) <= self.count
     }
     
     public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
@@ -246,7 +251,7 @@ extension DataLoader{
             return nil
         }
         
-        var labelVec = [Float](repeating: 0, count: self.numberOfClasses)
+        var labelVec = [Float32](repeating: 0, count: self.numberOfClasses)
         labelVec[labelIndex] = 1
         
         let labelData = Data(fromArray: labelVec)

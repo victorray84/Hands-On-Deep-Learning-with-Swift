@@ -31,44 +31,58 @@ public extension MPSImage{
      will be stored as follows:
      */
     @nonobjc public func toFloatArray() -> [Float]?{
+        switch pixelFormat {
+        case .r16Float, .rg16Float, .rgba16Float:
+            if var float16Array = self.toArray(padding: UInt16(0)){
+                return self.convertUInt16ToFloat(&float16Array)
+            }
+            return nil
+        case .r32Float, .rg32Float, .rgba32Float:
+            return self.toArray(padding: Float(0.0))
+        default:
+            fatalError("Unsupported pixelFormat \(pixelFormat)")
+        }
+    }
+    
+    private func toArray<T>(padding:T) -> [T]?{
         /*
-         An MPSImage object can contain multiple CNN images for batch processing. In order
-         to create an MPSImage object that contains N images, create an MPSImageDescriptor object
-         with the numberOfImages property set to N. The length of the 2D texture array (i.e.
-         the number of slices) will be equal to ((featureChannels+3)/4)*numberOfImages,
-         where consecutive (featureChannels+3)/4 slices of this array represent one image.
-         */
+             An MPSImage object can contain multiple CNN images for batch processing. In order
+             to create an MPSImage object that contains N images, create an MPSImageDescriptor object
+             with the numberOfImages property set to N. The length of the 2D texture array (i.e.
+             the number of slices) will be equal to ((featureChannels+3)/4)*numberOfImages,
+             where consecutive (featureChannels+3)/4 slices of this array represent one image.
+             */
         let numberOfSlices = ((self.featureChannels + 3)/4) * self.numberOfImages
         
         /*
-         If featureChannels<=4 and numberOfImages=1 (i.e. only one slice is needed to represent the image),
-         the underlying metal texture type is chosen to be MTLTextureType.type2D rather than
-         MTLTextureType.type2DArray as explained above.
-         */
+             If featureChannels<=4 and numberOfImages=1 (i.e. only one slice is needed to represent the image),
+             the underlying metal texture type is chosen to be MTLTextureType.type2D rather than
+             MTLTextureType.type2DArray as explained above.
+             */
         let totalChannels = self.featureChannels <= 2 ?
             self.featureChannels : numberOfSlices * 4
         
         /*
-         If featureChannels<=4 and numberOfImages=1 (i.e. only one slice is needed to represent
-         the image), the underlying metal texture type is chosen to be MTLTextureType.type2D
-         rather than MTLTextureType.type2DArray
-         */
+             If featureChannels<=4 and numberOfImages=1 (i.e. only one slice is needed to represent
+             the image), the underlying metal texture type is chosen to be MTLTextureType.type2D
+             rather than MTLTextureType.type2DArray
+             */
         let paddedFeatureChannels = self.featureChannels <= 2 ? self.featureChannels : 4
         
         let stride = self.width * self.height * paddedFeatureChannels
         
         let count =  self.width * self.height * totalChannels * self.numberOfImages
         
-        var outputUInt16 = [UInt16](repeating: 0, count: count)
+        var output = [T](repeating: padding, count: count)
         
-        let bytesPerRow = self.width * paddedFeatureChannels * MemoryLayout<UInt16>.size
+        let bytesPerRow = self.width * paddedFeatureChannels * MemoryLayout<T>.stride
         
         let region = MTLRegion(
             origin: MTLOrigin(x: 0, y: 0, z: 0),
             size: MTLSize(width: self.width, height: self.height, depth: 1))
         
         for sliceIndex in 0..<numberOfSlices{
-            self.texture.getBytes(&(outputUInt16[stride * sliceIndex]),
+            self.texture.getBytes(&(output[stride * sliceIndex]),
                                   bytesPerRow:bytesPerRow,
                                   bytesPerImage:0,
                                   from: region,
@@ -76,6 +90,10 @@ public extension MPSImage{
                                   slice:sliceIndex)
         }
         
+        return output
+    }
+    
+    private func convertUInt16ToFloat(_ outputUInt16: inout [UInt16]) -> [Float]?{
         // Convert UInt16 array into Float32 (Float in Swift)
         var output = [Float](repeating: 0, count: outputUInt16.count)
         

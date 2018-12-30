@@ -105,10 +105,12 @@ class Trainer{
     
     public static func train(){
         let TRAIN_PATH = "/Users/joshua.newnham/Documents/Shared Playground Data/Sketches/preprocessed/train/"
+        let trainPath = URL(fileURLWithPath: TRAIN_PATH)
+        
+        let VALID_PATH = "/Users/joshua.newnham/Documents/Shared Playground Data/Sketches/preprocessed/valid/"
+        let validPath = URL(fileURLWithPath: VALID_PATH)
         
         let WEIGHTS_PATH = "/Users/joshua.newnham/Documents/Shared Playground Data/sketch_cnn_weights/"
-        
-        let trainPath = URL(fileURLWithPath: TRAIN_PATH)
         let weightsPath = URL(fileURLWithPath: WEIGHTS_PATH)        
         
         // Create device
@@ -143,20 +145,23 @@ class Trainer{
          */
         
         // Create our data loader
-        let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
+        let trainDataLoader = DataLoader(device: device, sourcePathURL: trainPath)
+        let validDataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize: -1)
         
         // Create our training network
         let network = SketchCNN(
             withCommandQueue: commandQueue,
             inputShape: Trainer.targetShape,
-            numberOfClasses: dataLoader.numberOfClasses,
+            numberOfClasses: trainDataLoader.numberOfClasses,
             weightsPathURL:weightsPath, 
             mode:SketchCNN.NetworkMode.training)
         
         // Train
         print("=== Training will begin ===")
         
-        network.train(withDataLoaderForTraining: dataLoader) {
+        network.train(
+            withDataLoaderForTraining: trainDataLoader,
+            dataLoaderForValidation: validDataLoader) {
             print("=== Training did finish ===")
         }
     }
