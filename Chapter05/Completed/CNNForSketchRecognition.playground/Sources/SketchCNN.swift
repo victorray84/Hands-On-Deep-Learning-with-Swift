@@ -2,7 +2,6 @@ import Foundation
 import AppKit
 import MetalKit
 import MetalPerformanceShaders
-import PlaygroundSupport
 
 public class SketchCNN{
     
@@ -14,13 +13,17 @@ public class SketchCNN{
     let device : MTLDevice
     let commandQueue : MTLCommandQueue
     
-    let mode : NetworkMode
     let weightsPathURL : URL
+    
+    let mode : NetworkMode
     
     let inputShape : Shape
     let numberOfClasses : Int
     
-    var optimizer : MPSNNOptimizerStochasticGradientDescent?
+    public private(set) var learningRate : Float = 0.001
+    
+    public private(set) var momentumScale : Float = 0.2
+    
     var graph : MPSNNGraph?
     
     var datasources = [SketchCNNDatasource]()
@@ -28,27 +31,27 @@ public class SketchCNN{
     public init(withCommandQueue commandQueue:MTLCommandQueue,
                 inputShape:Shape,
                 numberOfClasses:Int,
-                weightsPathURL : URL,
-                mode:NetworkMode=NetworkMode.training){
+                weightsPathURL:URL,
+                mode:NetworkMode=NetworkMode.training,
+                learningRate:Float=0.001,
+                momentumScale:Float=0.2){
         
+        self.commandQueue = commandQueue
         self.device = commandQueue.device
         self.inputShape = inputShape
         self.numberOfClasses = numberOfClasses
         self.weightsPathURL = weightsPathURL
         self.mode = mode
-        self.commandQueue = commandQueue
+        self.learningRate = learningRate
+        self.momentumScale = momentumScale
         
         if mode == .training{
-            self.optimizer = MPSNNOptimizerStochasticGradientDescent(
-                device: self.device,
-                learningRate: 0.01)
-            
             self.graph = self.createTrainingGraph()
         } else{
             self.graph = self.createInferenceGraph()
         }
         
-        print(graph!.debugDescription)
+        //print(self.graph!.debugDescription)
     }
 }
 
@@ -73,27 +76,39 @@ extension SketchCNN{
             strideSize: strideSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: self.optimizer)
+            optimizer: self.makeOptimizer())
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
                 device: self.device,
                 cnnConvolutionDescriptor: datasource.descriptor())
+            
+            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
+                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
+                
+                datasource.momentumVectors = [weightsMomentum, biasMomentum]
+            }
         }
         
         self.datasources.append(datasource)
         
         let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
+        conv.resultImage.format = .float32
         conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        conv.label = "\(name)_conv"
         
         let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
+        relu.resultImage.format = .float32
+        relu.label = "\(name)_relu"
         
-        if !includeMaxPooling || poolSize <= 0{
+        if !includeMaxPooling{
             return [conv, relu]
         }
         
         let pooling = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: poolSize)
-        pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        pooling.resultImage.format = .float32
+        pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+        pooling.label = "\(name)_maxpooling"
         
         if self.mode == .inference || dropoutProbability == 0.0{
             return [conv, relu, pooling]
@@ -102,6 +117,8 @@ extension SketchCNN{
         let dropout = MPSCNNDropoutNode(
             source: pooling.resultImage,
             keepProbability: (1.0 - dropoutProbability))
+        dropout.resultImage.format = .float32
+        dropout.label = "\(name)_dropout"
         
         return [conv, relu, pooling, dropout]
     }
@@ -117,16 +134,23 @@ extension SketchCNN{
         
         let datasource = SketchCNNDatasource(
             name: name,
-            weightsPathURL: self.weightsPathURL,
+            weightsPathURL:self.weightsPathURL,
             kernelSize: kernelSize,
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
-            optimizer: self.optimizer)
+            optimizer: self.makeOptimizer())
         
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
                 device: self.device,
                 cnnConvolutionDescriptor: datasource.descriptor())
+        
+            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
+                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
+                
+                datasource.momentumVectors = [weightsMomentum, biasMomentum]
+            }
+
         }
         
         self.datasources.append(datasource)
@@ -135,13 +159,17 @@ extension SketchCNN{
             source: x,
             weights: datasource)
         
-        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)        
+        fc.resultImage.format = .float32
+        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+        fc.label = "\(name)_fc"
         
         if !includeActivation{
             return [fc]
         }
         
         let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
+        relu.resultImage.format = .float32
+        relu.label = "\(name)_relu"
         
         if self.mode == .inference || dropoutProbability == 0.0{
             return [fc, relu]
@@ -150,47 +178,97 @@ extension SketchCNN{
         let dropout = MPSCNNDropoutNode(
             source: relu.resultImage,
             keepProbability: (1.0 - dropoutProbability))
+        dropout.resultImage.format = .float32
+        dropout.label = "\(name)_dropout"
         
         return [fc, relu, dropout]
     }
     
+    private func makeMPSVector(count:Int, repeating:Float=0.0) -> MPSVector?{
+        // Create a Metal buffer
+        guard let buffer = self.device.makeBuffer(
+            bytes: Array<Float32>(repeating: repeating, count: count),
+            length: count * MemoryLayout<Float32>.size, options: [.storageModeShared]) else{
+                return nil
+        }
+        
+        // Create a vector descriptor
+        let desc = MPSVectorDescriptor(
+            length: count, dataType: MPSDataType.float32)
+        
+        // Create a vector with descriptor
+        let vector = MPSVector(
+            buffer: buffer, descriptor: desc)
+        
+        return vector
+    }
+    
+    private func makeOptimizer() -> MPSNNOptimizerStochasticGradientDescent?{
+        guard self.mode == .training else{
+            return nil
+        }
+        
+        let optimizerDescriptor = MPSNNOptimizerDescriptor(
+            learningRate: self.learningRate,
+            gradientRescale: 1.0,
+            regularizationType: MPSNNRegularizationType.None,
+            regularizationScale: 1.0)
+        
+        let optimizer = MPSNNOptimizerStochasticGradientDescent(
+            device: self.device,
+            momentumScale: self.momentumScale,
+            useNestrovMomentum: true,
+            optimizerDescriptor: optimizerDescriptor)
+        
+        optimizer.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
+        
+        //print(optimizer.debugDescription)
+        
+        return optimizer
+    }
 }
 
 // MARK: - Inference
 
 extension SketchCNN{
     
-    public func predict(
-        x:MPSImage,
-        completationHandler handler: @escaping (MPSImage?) -> Void) -> Void{
+    public func predict(X:[MPSImage]) -> [[Float]]?{
         
         guard let graph = self.graph else{
-            return
+            return nil
         }
         
-        graph.executeAsync(withSourceImages: [x]) { (outputImage, error) in
-            DispatchQueue.main.async {
-                if error != nil{
-                    print(error!)
-                    handler(nil)
-                    return
-                }
+        if let commandBuffer = self.commandQueue.makeCommandBuffer(){
+            let outputs = graph.encodeBatch(
+                to: commandBuffer,
+                sourceImages: [X],
+                sourceStates: nil)
+            
+            // Syncronize the outputs after the prediction has been made
+            // so we can get access to the values on the CPU
+            outputs?.forEach({ (output) in
+                output.synchronize(on: commandBuffer)
+            })
+            
+            // Commit the command to the GPU
+            commandBuffer.commit()
+            
+            // Wait for it to finish
+            commandBuffer.waitUntilCompleted()
+            
+            // Process outputs
+            if let outputs = outputs{
+                let predictions = outputs.map({ (output) -> [Float] in
+                    if let probs = output.toFloatArray(){
+                        return Array<Float>(probs[0..<self.numberOfClasses])
+                    }
+                    return [Float]()
+                })
                 
-//                if outputImage != nil{
-//                    guard let probs = outputImage!.toFloatArray() else{
-//                        handler(nil)
-//                        return
-//                    }
-//
-//                    handler(Array<Float>(probs[0..<self.numberOfClasses]))
-//                    return
-//                }
-//
-//                handler(nil)
-                
-                handler(outputImage)
+                return predictions
             }
         }
+        return nil
     }
     
     private func createInferenceGraph() -> MPSNNGraph?{
@@ -288,11 +366,13 @@ extension SketchCNN{
         // OUTPUT = numberOfClasses
         
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
+        softmax.label = "output"
         
-        guard let graph = MPSNNGraph(device: device,
-                                     resultImage: softmax.resultImage,
-                                     resultImageIsNeeded: true) else{
-                                        return nil
+        guard let graph = MPSNNGraph(
+            device: device,
+            resultImage: softmax.resultImage,
+            resultImageIsNeeded: true) else{
+                return nil
         }
         
         return graph
@@ -301,48 +381,65 @@ extension SketchCNN{
 
 extension SketchCNN{
     
+    @discardableResult
     public func train(
-        withDataLoader dataLoader:DataLoader,
-        epochs : Int = 20,
-        completionHandler handler: @escaping () -> Void) -> Bool{
+        withDataLoaderForTraining trainDataLoader:DataLoader,
+        dataLoaderForValidation validDataLoader:DataLoader? = nil,
+        epochs : Int = 500,
+        completionHandler handler: @escaping () -> Void) -> [(epoch:Int, accuracy:Float)]{
+        
+        var validationAccuracy = [(epoch:Int, accuracy:Float)]()
         
         let trainingSemaphore = DispatchSemaphore(value:2)
         
         var latestCommandBuffer : MTLCommandBuffer?
         
-        for epoch in 1...epochs{
-            dataLoader.reset()
+        // Check initial validation score
+        if let validDataLoader = validDataLoader{
+            let accuracy = self.validate(withDataLoader: validDataLoader)
+            print("Initial model accuracy is \(accuracy)")
             
-            while dataLoader.hasNext(){
-                autoreleasepool{
-                    latestCommandBuffer = self.trainStep(
-                        withDataLoader:dataLoader,
-                        semaphore:trainingSemaphore)
-                }
-                
-            }
-            
-            // wait for training to complete
-            if latestCommandBuffer?.status != .completed{
-                latestCommandBuffer?.waitUntilCompleted()
-            }
-            
-            // progressively save weights (always good practice)
-            if epoch % 50 == 0{
-                print("Finished epoch \(epoch)")
-                updateDatasources()
-            }
-            
-            // reset the current index of the data loader
-            dataLoader.reset()
+            validationAccuracy.append((epoch: 0, accuracy:accuracy))
         }
         
-        updateDatasources()
+        for epoch in 1...epochs{
+            autoreleasepool{
+                trainDataLoader.reset()
+                
+                while trainDataLoader.hasNext(){
+                    latestCommandBuffer = self.trainStep(
+                        withDataLoader: trainDataLoader,
+                        semaphore: trainingSemaphore)
+                }
+                
+                // wait for training to complete
+                if latestCommandBuffer?.status != .completed{
+                    latestCommandBuffer?.waitUntilCompleted()
+                }
+                
+                // reset Data loader
+                trainDataLoader.reset()
+                
+                // Update and validate model every 5 epochs or on the last epoch
+                if epoch % 5 == 0 || epoch == epochs{
+                    print("Finished epoch \(epoch)")
+                    updateDatasources()
+                    
+                    if let validDataLoader = validDataLoader{
+                        let accuracy = self.validate(withDataLoader: validDataLoader)
+                        print("Model Accuracy after \(epoch) epoch(s) is \(accuracy)")
+                        
+                        validationAccuracy.append((epoch: epoch, accuracy:accuracy))
+                    }
+                }
+            }
+        }
         
+        print("Finished training")
         
         handler()
         
-        return true
+        return validationAccuracy
     }
     
     private func trainStep(withDataLoader dataLoader:DataLoader, semaphore:DispatchSemaphore) -> MTLCommandBuffer?{
@@ -365,10 +462,12 @@ extension SketchCNN{
             return nil
         }
         
-        let _ = graph.encodeBatch(
-            to: commandBuffer,
-            sourceImages: [batch.images],
-            sourceStates: [batch.labels])
+        graph.encodeBatch(to: commandBuffer,
+                          sourceImages: [batch.images],
+                          sourceStates: [batch.labels],
+                          intermediateImages: nil,
+                          destinationStates: nil)
+        
         
         commandBuffer.addCompletedHandler({ (commandBuffer) in
             semaphore.signal()
@@ -376,11 +475,52 @@ extension SketchCNN{
         
         commandBuffer.commit()
         
+        //        commandBuffer.waitUntilCompleted()
+        
         return commandBuffer
     }
     
+    func validate(withDataLoader dataLoader:DataLoader) -> Float{
+        // Create inference network
+        let inferenceNetwork = SketchCNN(
+            withCommandQueue: self.commandQueue,
+            inputShape: self.inputShape,
+            numberOfClasses: self.numberOfClasses,
+            weightsPathURL: self.weightsPathURL,
+            mode: .inference)
+        
+        var sampleCount : Float = 0.0
+        var predictionsCorrectCount : Float = 0.0
+        
+        dataLoader.reset()
+        
+        while dataLoader.hasNext(){
+            autoreleasepool{
+                guard let commandBuffer = commandQueue.makeCommandBuffer() else{
+                    fatalError()
+                }
+                
+                if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
+                    if let predictions = inferenceNetwork.predict(X: batch.images){
+                        assert(predictions.count == batch.labels.count)
+                        
+                        for i in 0..<predictions.count{
+                            sampleCount += 1.0
+                            let predictedClass = dataLoader.labels[predictions[i].argmax]
+                            let actualClass = batch.labels[i].label ?? ""
+                            
+                            predictionsCorrectCount += predictedClass == actualClass ? 1.0 : 0.0
+                        }
+                    }
+                }
+            }
+        }
+        
+        return predictionsCorrectCount/sampleCount
+    }
+    
     private func updateDatasources(){
-        // Get command buffer to use in MetalPerformanceShaders.
+        // Syncronize weights and biases from GPU to CPU
         guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
             return
         }
@@ -389,12 +529,31 @@ extension SketchCNN{
             datasource.synchronizeParameters(on: commandBuffer)
         }
         
+        //        /// DEV
+        //        for datasource in self.datasources{
+        //            datasource.momentumVectors?[0].synchronize(on: commandBuffer)
+        //            datasource.velocityVectors?[0].synchronize(on: commandBuffer)
+        //        }
+        //        ///
+        
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
-        for datasource in self.datasources{
-            datasource.updateAndSaveParametersToDisk()
+        /// DEV
+        if let wb = self.datasources[0].weightsAndBiasesState{
+            let wtData = wb.weights.toArray(type: Float.self)
+            let bData = wb.biases!.toArray(type: Float.self)
+            print("\(wtData[0..<10])")
+            print("\(bData[0..<10])")
         }
+        ///
+        
+        // Persist the weightds and bias terms to disk
+        for datasource in self.datasources{
+            datasource.saveParametersToDisk()
+        }
+        
+        //        self.graph?.reloadFromDataSources()
     }
     
     private func createTrainingGraph() -> MPSNNGraph?{
@@ -403,7 +562,7 @@ extension SketchCNN{
         // placeholder node
         let input = MPSNNImageNode(handle: nil)
         
-        // INPUT = 256x256x1
+        // INPUT = 128x128x1
         
         // Scale
         let scale = MPSNNLanczosScaleNode(
@@ -506,50 +665,110 @@ extension SketchCNN{
             lossDescriptor: lossDesc)
         
         // === Backwards pass ===
-        
+        loss.resultImage.format = .float32
         let softmaxG = softmax.gradientFilter(withSource: loss.resultImage)
         
         // Keep track of the last nodes result image to pass it to the next
         var lastResultImage = softmaxG.resultImage
+        lastResultImage.format = .float32
+        
+        // Set training style; this can be sett via the trainingStyle property of a MPSCNNConvolutionGradientNode object.
+        // Valid value are:
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceCPU (to update on tthe CPU)
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceGPU (to update on tthe GPU
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceNone (don't update this layer)
+        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
         
         let _ = layer6Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            
             lastResultImage = gradientNode.resultImage
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
         
         let _ = layer5Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            
             lastResultImage = gradientNode.resultImage
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
-
+        
         let _ = layer4Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
         
         let _ = layer3Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
         
         let _ = layer2Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
         
         let _ = layer1Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastResultImage)
             lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
             return gradientNode
         }
         
-        return MPSNNGraph(device: self.device,
-                          resultImage: lastResultImage,
-                          resultImageIsNeeded: false)
+        if let graph = MPSNNGraph(
+            device: self.device,
+            resultImage: lastResultImage,
+            resultImageIsNeeded: false){
+            
+            graph.outputStateIsTemporary = true
+            
+            graph.format = .float32
+            
+            return graph
+        }
+        
+        return nil
     }
 }

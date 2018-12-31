@@ -23,7 +23,6 @@
 		8478DA20219A351200BD99CB /* SketchCNNDatasource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA1F219A351200BD99CB /* SketchCNNDatasource.swift */; };
 		8478DA22219A353B00BD99CB /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA21219A353B00BD99CB /* Types.swift */; };
 		8478DA25219A359600BD99CB /* Trainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8478DA24219A359600BD99CB /* Trainer.swift */; };
-		84F8BBA821CCE3C000618C3B /* atomics.m in Sources */ = {isa = PBXBuildFile; fileRef = 84F8BBA721CCE3C000618C3B /* atomics.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,8 +46,6 @@
 		8478DA21219A353B00BD99CB /* Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Types.swift; sourceTree = "<group>"; };
 		8478DA24219A359600BD99CB /* Trainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trainer.swift; sourceTree = "<group>"; };
 		84F8BBA621CCE3C000618C3B /* CNNForSketchRecognitionApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "CNNForSketchRecognitionApp-Bridging-Header.h"; sourceTree = "<group>"; };
-		84F8BBA721CCE3C000618C3B /* atomics.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = atomics.m; sourceTree = "<group>"; };
-		84F8BBA921CCE3E300618C3B /* atomics.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = atomics.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,8 +91,6 @@
 				844F3A5C219B02DE004DE12A /* SketchCNNPoolPadding.swift */,
 				8478DA21219A353B00BD99CB /* Types.swift */,
 				8478DA24219A359600BD99CB /* Trainer.swift */,
-				84F8BBA921CCE3E300618C3B /* atomics.h */,
-				84F8BBA721CCE3C000618C3B /* atomics.m */,
 				84F8BBA621CCE3C000618C3B /* CNNForSketchRecognitionApp-Bridging-Header.h */,
 			);
 			path = CNNForSketchRecognitionApp;
@@ -198,7 +193,6 @@
 				8478DA20219A351200BD99CB /* SketchCNNDatasource.swift in Sources */,
 				8478DA18219A34C100BD99CB /* MPSImage+Extension.swift in Sources */,
 				8478DA10219A346E00BD99CB /* CGImage+Extension.swift in Sources */,
-				84F8BBA821CCE3C000618C3B /* atomics.m in Sources */,
 				844F3A5D219B02DE004DE12A /* SketchCNNPoolPadding.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

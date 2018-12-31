@@ -133,16 +133,6 @@ extension SketchCNNDatasource{
         self.weightsData = self.loadWeights()
         self.biasTermsData = self.loadBiasTerms()
         
-//        /// DEV
-//        if let weights = self.weightsData?.toArray(type: Float32.self){
-//            print("Weights loaded \(self.name) ... \(weights.count) ... \(weights[0...10])")
-//        }
-//
-//        if let bias = self.biasTermsData?.toArray(type: Float.self){
-//            print("Bias Weights loaded \(self.name) ... \(bias.count) ... \(bias[0...10])")
-//        }
-//        /// 
-        
         return self.weightsData != nil
     }
     
@@ -207,33 +197,7 @@ extension SketchCNNDatasource{
     // Update called when training on the CPU
     func update(with gradientState: MPSCNNConvolutionGradientState,
                 sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
-        
         self.cnnConvolution = gradientState.convolution
-        
-        /// DEV
-        if self.name == "l1"{
-            let tmp = sourceState.weights.toArray(type: Float32.self)
-            print("Weights \(self.name) ... \(tmp.count) ... \(tmp[0...10])")
-
-            let tmp2 = gradientState.gradientForWeights.toArray(type: Float32.self)
-            print("Gradient weights \(self.name) ... \(tmp2.count) ... \(tmp2[0...10])")
-            
-            let tmp3 = gradientState.gradientForBiases.toArray(type: Float.self)
-            print("Gradient for bias terms \(self.name) ... \(tmp3.count) ... \(tmp3[0...10])")
-        }
-
-        if self.name == "l6"{
-            let tmp = sourceState.weights.toArray(type: Float32.self)
-            print("Weights \(self.name) ... \(tmp.count) ... \(tmp[0...10])")
-
-            let tmp2 = gradientState.gradientForWeights.toArray(type: Float32.self)
-            print("Gradient weights \(self.name) ... \(tmp2.count) ... \(tmp2[0...10])")
-            
-            let tmp3 = gradientState.gradientForBiases.toArray(type: Float.self)
-            print("Gradient for bias terms \(self.name) ... \(tmp3.count) ... \(tmp3[0...10])")
-        }
-        ///
-        
         return true
     }
     
@@ -253,26 +217,6 @@ extension SketchCNNDatasource{
         // (instead of our approach of retaining explicit reference via the DataSources weightsAndBiasesState property)
         self.cnnConvolution = gradientState.convolution
         
-//        /// DEV
-//        sourceState.readCount += 1
-//
-//        optimizer.encode(
-//            commandBuffer: commandBuffer,
-//            convolutionGradientState: gradientState,
-//            convolutionSourceState: sourceState,
-//            inputMomentumVectors: nil,
-//            resultState: sourceState)
-//        ///
-        
-//        sourceState.readCount += 1
-        
-//        optimizer.encode(
-//            commandBuffer: commandBuffer,
-//            convolutionGradientState: gradientState,
-//            convolutionSourceState: sourceState,
-//            inputMomentumVectors: nil,
-//            resultState: weightsAndBiasesState)
-        
         optimizer.encode(
             commandBuffer: commandBuffer,
             convolutionGradientState: gradientState,
@@ -280,29 +224,10 @@ extension SketchCNNDatasource{
             inputMomentumVectors: self.momentumVectors,
             resultState: weightsAndBiasesState)
         
-//        optimizer.encode(
-//            commandBuffer: commandBuffer,
-//            convolutionGradientState: gradientState,
-//            convolutionSourceState: sourceState,
-//            inputMomentumVectors: nil,
-//            resultState: sourceState)
-        
-//        return weightsAndBiasesState
-        
-        //gradientState.readCount -= 1
-        
-//        return sourceState
-        
-//        return weightsAndBiasesState
-        
         return weightsAndBiasesState
     }
     
     func synchronizeParameters(on commandBuffer:MTLCommandBuffer){
-        // Get reference to the weights and biases state
-//        self.weightsAndBiasesState = self.cnnConvolution?.exportWeightsAndBiases(
-//            with: commandBuffer, resultStateCanBeTemporary: false)
-        
         // Syncronise the weights so we can access them on the CPU (and save to disk)
         self.weightsAndBiasesState?.synchronize(on: commandBuffer)
     }
@@ -332,36 +257,6 @@ extension SketchCNNDatasource{
         guard let weightsAndBiasesState = self.weightsAndBiasesState else{
             fatalError("Dependent variable weightsAndBiasesState is null")
         }
-
-//        /// DEV
-//        let data = weightsAndBiasesState.weights.toArray(type: Float.self)
-//        if data[0] == Float.nan{
-//            print("Weights are NAN for \(self.name)")
-//        }
-//        ///
-        
-        /// DEV
-        if self.name == "l1"{
-            let wtsArray = weightsAndBiasesState.weights.toArray(type: Float32.self)
-            print("weights")
-            print(wtsArray[0..<10])
-            
-            if let biasArray = weightsAndBiasesState.biases?.toArray(type: Float.self){
-                print("bias terms")
-                print(biasArray[0..<10])
-            }
-            
-            if let velArray = self.velocityVectors?[0].data.toArray(type: Float32.self){
-                print("velcoity")
-                print(velArray[0..<10])
-            }
-            
-            if let momentumArray = self.momentumVectors?[0].data.toArray(type: Float32.self){
-                print("momentum")
-                print(momentumArray[0..<10])
-            }
-        }
-        ///
         
         self.weightsData = Data(fromArray:weightsAndBiasesState.weights.toArray(type: Float32.self))
 

@@ -5,13 +5,14 @@ import MetalPerformanceShaders
 
 class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     
-    let name : String
-    let weightsPathURL : URL
+    static let FolderName = "sketch_cnn_weights"
     
+    let name : String
     let kernelSize : KernelSize
     let strideSize : KernelSize
     let inputFeatureChannels : Int
     let outputFeatureChannels : Int
+    let weightsPathURL : URL
     
     var optimizer : MPSNNOptimizerStochasticGradientDescent?
     var weightsAndBiasesState : MPSCNNConvolutionWeightsAndBiasesState?
@@ -20,6 +21,26 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     var biasTermsData : Data?
     
     let useBias : Bool
+    
+    // Reference to the underlying MPSCNNConvolution; useful for debugging
+    //var cnnConvolution : MPSCNNConvolution?
+    
+    var momentumVectors : [MPSVector]?
+    
+    var weightsLength : Int{
+        get{
+            return self.outputFeatureChannels
+                * self.kernelSize.height
+                * self.kernelSize.width
+                * self.inputFeatureChannels
+        }
+    }
+    
+    var biasTermsLength : Int{
+        get{
+            return self.outputFeatureChannels
+        }
+    }
     
     lazy var cnnDescriptor : MPSCNNConvolutionDescriptor = {
         var descriptor = MPSCNNConvolutionDescriptor(
@@ -73,7 +94,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     }
     
     public func biasTerms() -> UnsafeMutablePointer<Float>?{
-        guard self.useBias, let biasTermsData = self.biasTermsData else{
+        guard let biasTermsData = self.biasTermsData else{
             return nil
         }
         
@@ -113,10 +134,8 @@ extension SketchCNNDatasource{
         let url = self.weightsPathURL.appendingPathComponent("\(self.name)_conv.data")
         
         do{
-            print("loading weights \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
-            print("Generating weights \(error)")
             // Generate weights
             return self.generateRandomWeights()
         }
@@ -130,11 +149,9 @@ extension SketchCNNDatasource{
         let url = self.weightsPathURL.appendingPathComponent("\(self.name)_bias.data")
         
         do{
-            print("loading bias terms \(url.absoluteString)")
             return try Data(contentsOf:url)
         } catch{
-            print("Generating bias \(error)")
-            // Generate bias terms 
+            // Generate bias terms
             return self.generateBiasTerms()
         }
     }
@@ -145,11 +162,10 @@ extension SketchCNNDatasource{
             * self.kernelSize.width
             * self.inputFeatureChannels
         
-        print("Generating weights for \(self.name) size = \(count)")
+        var randomWeights = Array<Float32>(repeating: 0, count: count)
         
-        var randomWeights = Array<Float>(repeating: 0, count: count)
-        for i in 0..<randomWeights.count{
-            randomWeights[i] = Float.random(in: 0...0.01)
+        for index in 0..<count{
+            randomWeights[index] = Float32.random(in: -0.1...0.1)
         }
         
         return Data(fromArray:randomWeights)
@@ -158,9 +174,11 @@ extension SketchCNNDatasource{
     private func generateBiasTerms() -> Data?{
         let weightsCount = self.outputFeatureChannels
         
-        print("Generating bias terms for \(self.name) size = \(weightsCount)")
+        var biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
         
-        let biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
+        for index in 0..<biasTerms.count{
+            biasTerms[index] = Float.random(in: -0.001...0.001)
+        }
         
         return Data(fromArray:biasTerms)
     }
@@ -173,8 +191,7 @@ extension SketchCNNDatasource{
     // Update called when training on the CPU
     func update(with gradientState: MPSCNNConvolutionGradientState,
                 sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
-        
-        return false
+        return true
     }
     
     // Update called when training on the GPU
@@ -187,22 +204,25 @@ extension SketchCNNDatasource{
                 return nil
         }
         
+        // You can get reference to the underlying MPSCNNConvolution via gradientState.convolution;
+        // having access to the convolution layer exposes more properties of the controlutional layer. For
+        // example; you can obtain the current layers weights via the function MPSCNNConvolution.exportWeightsAndBiases
+        // (instead of our approach of retaining explicit reference via the DataSources weightsAndBiasesState property)
+        //self.cnnConvolution = gradientState.convolution
+        
         optimizer.encode(
             commandBuffer: commandBuffer,
             convolutionGradientState: gradientState,
             convolutionSourceState: sourceState,
-            inputMomentumVectors: nil,
+            inputMomentumVectors: self.momentumVectors,
             resultState: weightsAndBiasesState)
         
         return weightsAndBiasesState
     }
     
     func synchronizeParameters(on commandBuffer:MTLCommandBuffer){
-        guard let weightsAndBiasesState = self.weightsAndBiasesState else{
-            return
-        }
-        
-        weightsAndBiasesState.synchronize(on: commandBuffer)
+        // Syncronise the weights so we can access them on the CPU (and save to disk)
+        self.weightsAndBiasesState?.synchronize(on: commandBuffer)
     }
 }
 
@@ -226,17 +246,16 @@ extension SketchCNNDatasource{
         return true
     }
     
-    func updateAndSaveParametersToDisk(){
-        print("updateAndSaveParametersToDisk \(self.name)")
+    func saveParametersToDisk(){
         guard let weightsAndBiasesState = self.weightsAndBiasesState else{
-            return
+            fatalError("Dependent variable weightsAndBiasesState is null")
         }
         
-        self.weightsData = Data(fromArray:weightsAndBiasesState.weights.toArray(type: Float.self))
+        self.weightsData = Data(fromArray:weightsAndBiasesState.weights.toArray(type: Float32.self))
         
         if let biasData = weightsAndBiasesState.biases {
-            self.biasTermsData = Data(
-                fromArray:biasData.toArray(type: Float.self))
+            let biasDataArray = biasData.toArray(type: Float.self)
+            self.biasTermsData = Data(fromArray:biasDataArray)
         }
         
         self.saveToDisk()
@@ -260,7 +279,6 @@ extension SketchCNNDatasource{
         
         do{
             try data.write(to: url, options: NSData.WritingOptions.atomicWrite)
-            print("Saved weights to \(url.absoluteString)")
             return true
         } catch{
             print("Failed to save weights to disk \(error)")
@@ -270,8 +288,9 @@ extension SketchCNNDatasource{
     
     @discardableResult
     func saveBiasTermsToDisk() -> Bool{
-        guard let data = self.biasTermsData else{
-            return true
+        guard self.useBias,
+            let data = self.biasTermsData else{
+                return true
         }
         
         // check the folder exists
@@ -281,7 +300,6 @@ extension SketchCNNDatasource{
         
         do{
             try data.write(to: url, options: NSData.WritingOptions.atomicWrite)
-            print("Saved bias terms to \(url.absoluteString)")
             return true
         } catch{
             print("Failed to save bias terms to disk \(error)")

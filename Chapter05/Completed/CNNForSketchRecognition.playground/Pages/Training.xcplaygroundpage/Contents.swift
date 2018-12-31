@@ -1,13 +1,5 @@
-/*:
- 
- # [Hands-On Deep Learning with Swift]()
- ### Chapter 4 - Metal for Machine Learning
- *Writen by [Joshua Newnham](https://www.linkedin.com/in/joshuanewnham) and published by [Packt Publishing](https://www.packtpub.com/big-data-and-business-intelligence/machine-learning-core-ml)*
- 
- **Playground Pages**
- - [Validation](Validation) page to test our model on our validation dataset
- - [Inference](Inference) page to use our model to perform inference on our own sketches
- */
+//: [Previous](@previous)
+
 import Foundation
 import AppKit
 import AVFoundation
@@ -18,18 +10,20 @@ import Accelerate
 import GLKit
 import PlaygroundSupport
 
-
 let BASE_WEIGHTS_PATH = "sketch_cnn_weights"
-
-let BASE_TRAIN_PATH = "Sketches/preprocessed/train"
-
 let weightsPath = PlaygroundSupport
     .playgroundSharedDataDirectory
     .appendingPathComponent("\(BASE_WEIGHTS_PATH)")
 
+let BASE_TRAIN_PATH = "Sketches/preprocessed/train"
 let trainPath = PlaygroundSupport
     .playgroundSharedDataDirectory
     .appendingPathComponent(BASE_TRAIN_PATH)
+
+let BASE_VALID_PATH = "Sketches/preprocessed/valid"
+let validPath = PlaygroundSupport
+    .playgroundSharedDataDirectory
+    .appendingPathComponent(BASE_VALID_PATH)
 
 // Create device
 guard let device = MTLCreateSystemDefaultDevice() else{
@@ -62,60 +56,37 @@ guard let commandQueue = device.makeCommandQueue() else{
  afterwards we would reset it and start from the begining - below is an extract demonstrating this.
  */
 
-
-//let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
-//var batch = dataLoader.getNextBatch()
-//
-//let network = SketchCNN(
-//    withCommandQueue: commandQueue,
-//    inputShape: Shape(width:dataLoader.imageWidth,
-//                      height:dataLoader.imageHeight,
-//                      channels:dataLoader.featureChannels),
-//    numberOfClasses: dataLoader.numberOfClasses,
-//    mode:SketchCNN.NetworkMode.inference)
-//
-//if batch != nil{
-//    let x = batch!.images[0]
-//    let y = batch!.labels[0]
-//    network.predict(x: x) { (probs) in
-//        print("predictions for \(y.label)")
-//        print(probs)
-//        print("finished")
-//    }
-//}
-
 /*:
  ### Training
  Training is a iterative process of having our network make predictions and then adjusting the node weights
  based on the loss (*typically the mean squared error between the **predicted value** and **actual value***).
  */
 
-
 // Create our data loader
-let dataLoader = DataLoader(device: device, sourcePathURL: trainPath)
+let trainDataLoader = DataLoader(device: device, sourcePathURL: trainPath)
+let validDataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize: -1)
 
 // We pass in the target shape which will be used to scale the inputs accordingly
 let targetShape = Shape(
-    width:dataLoader.imageWidth,
-    height:dataLoader.imageHeight,
-    channels:dataLoader.featureChannels)
+    width:trainDataLoader.imageWidth,
+    height:trainDataLoader.imageHeight,
+    channels:trainDataLoader.featureChannels)
 
 // Create our training network
 let network = SketchCNN(
     withCommandQueue: commandQueue,
     inputShape: targetShape,
-    numberOfClasses: dataLoader.numberOfClasses,
-    weightsPathURL: weightsPath,
-    mode: .training)
+    numberOfClasses: trainDataLoader.numberOfClasses,
+    weightsPathURL:weightsPath,
+    mode:SketchCNN.NetworkMode.training)
 
 // Train
-print("Training will begin")
+print("=== Training will begin ===")
 
-network.train(withDataLoader: dataLoader) {
-    print("Training did finish")
+network.train(
+    withDataLoaderForTraining: trainDataLoader,
+    dataLoaderForValidation: validDataLoader) {
+        print("=== Training did finish ===")
 }
 
-//let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
-//conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame | MPSNNPaddingMethod.excludeEdges)
-
-//: [Goto next Page](@next)
+//: [Next](@next)

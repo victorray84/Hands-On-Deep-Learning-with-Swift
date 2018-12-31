@@ -1,4 +1,12 @@
-//: [Previous](@previous)
+/*:
+ # [Hands-On Deep Learning with Swift]()
+ ### Chapter 5 - Applying CNNs to recognise sketches
+ *Writen by [Joshua Newnham](https://www.linkedin.com/in/joshuanewnham) and published by [Packt Publishing](https://www.packtpub.com/big-data-and-business-intelligence/machine-learning-core-ml)*
+ 
+ **Playground Pages**
+ - [Training](Training) page to train our model
+ - [Inference](Inference) page to use our model to perform inference on our own sketches
+ */
 
 import Foundation
 import AppKit
@@ -11,13 +19,11 @@ import GLKit
 import PlaygroundSupport
 
 let BASE_WEIGHTS_PATH = "sketch_cnn_weights"
-
-let BASE_VALID_PATH = "Sketches/preprocessed/valid"
-
 let weightsPath = PlaygroundSupport
     .playgroundSharedDataDirectory
     .appendingPathComponent("\(BASE_WEIGHTS_PATH)")
 
+let BASE_VALID_PATH = "Sketches/preprocessed/valid"
 let validPath = PlaygroundSupport
     .playgroundSharedDataDirectory
     .appendingPathComponent(BASE_VALID_PATH)
@@ -41,26 +47,14 @@ guard let commandQueue = device.makeCommandQueue() else{
 }
 
 /*:
- ### Training in batches
- One of the hyperparameters you'll adjust when training a neural network is the batch size i.e.
- how much data you expose your network to a during each *step*. It, the batch size, offers practical and
- tuning capabilities. Sometimes it's not feasible to fit all your data into memory therefore its necessary
- to work in smaller batches, the other is that your network's loss function may be susceptible by the
- size due to adjusting to the mean, working in smaller batches provides some way of fine tuning that would
- be otherwise missed when working on the larger sample.
- 
- Our dataloader will return a predefined batch and continue returning a batch until no data is available;
- afterwards we would reset it and start from the begining - below is an extract demonstrating this.
+ ### Validation
+ We evaluate (and assess) our model on a dataset which was not used for training, the validation set.
+ Typically you would also reserve another hold-out dataset which is omitted during training and used
+ to evaluate how well your model generalises, this dataset is known as the test set - but not used here.
  */
 
-/*:
- ### Training
- Training is a iterative process of having our network make predictions and then adjusting the node weights
- based on the loss (*typically the mean squared error between the **predicted value** and **actual value***).
- */
-
-// Create our data loader
-let dataLoader = DataLoader(device: device, sourcePathURL: validPath)
+// Create our data loader, passing in -1 to signal we want to use all samples for a single batch
+let dataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize: -1)
 
 // We pass in the target shape which will be used to scale the inputs accordingly
 let targetShape = Shape(
@@ -73,50 +67,41 @@ let network = SketchCNN(
     withCommandQueue: commandQueue,
     inputShape: targetShape,
     numberOfClasses: dataLoader.numberOfClasses,
-    weightsPathURL: weightsPath,
-    mode: .inference)
+    weightsPathURL:weightsPath,
+    mode:SketchCNN.NetworkMode.inference)
 
-//autoreleasepool{
-    guard let commandBuffer = commandQueue.makeCommandBuffer() else{
-        fatalError()
-    }
-    
-    if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
-        let img = batch.images[30]
+// Perform inference for all the samples in our data loader, we'll keep track of the number of samples
+// and how many times we predicted correctly to calculate the accuracy
+var sampleCount : Float = 0.0
+var predictionsCorrectCount : Float = 0.0
+
+// Force our dataloader to the start
+dataLoader.reset()
+
+while dataLoader.hasNext(){
+    autoreleasepool{
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else{
+            fatalError()
+        }
         
-//        network.predict(x: img) { (probs) in
-//
-//            print("Actual value \(batch.labels[30].label ?? "")")
-//            if let probs = probs{
-//                print("Probabilities \(probs)")
-//                print("Predicted label \(dataLoader.labels[probs.argmax])")
-//                print(dataLoader.labels)
-//            }
-//            print("Finished")
-//        }
-        
-        network.predict(x: img) { (outputImage) in
-            
-            // convert output texture to image
-            
-            let img = outputImage 
-            let tex = outputImage?.texture
-            print("w \(outputImage?.width) h \(outputImage?.height) c \(outputImage?.featureChannels)")
-            
-            if let array = img?.toFloatArray(){
-                var count = 0
-                for i in 0..<array.count{
-                    if array[i] > 0{
-                        print("\(i) \(array[i])")
-                        count += 1
-                    }
-                }
+        if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
+            if let predictions = network.predict(X: batch.images){
+                assert(predictions.count == batch.labels.count)
                 
-                print("\(Float(count)/Float(array.count))")
+                for i in 0..<predictions.count{
+                    sampleCount += 1.0
+                    let predictedClass = dataLoader.labels[predictions[i].argmax]
+                    let actualClass = batch.labels[i].label ?? ""
+                    
+                    predictionsCorrectCount += predictedClass == actualClass ? 1.0 : 0.0
+                }
             }
         }
     }
-//}
+}
 
+let accuracy = predictionsCorrectCount/sampleCount
 
-//: [Next](@next)
+print("Validation accuracy \(accuracy)")
+
+//: [Goto next Page](@next)

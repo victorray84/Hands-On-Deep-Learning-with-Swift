@@ -9,6 +9,5 @@
 #ifndef CNNForSketchRecognition_Bridging_Header_h
 #define CNNForSketchRecognition_Bridging_Header_h
 
-#import "atomics.h"
 
 #endif /* MPSCNNHelloWorld_Bridging_Header_h */

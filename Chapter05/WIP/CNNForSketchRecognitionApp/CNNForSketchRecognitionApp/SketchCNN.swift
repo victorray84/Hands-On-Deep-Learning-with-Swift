@@ -22,6 +22,8 @@ public class SketchCNN{
     
     public private(set) var learningRate : Float = 0.001
     
+    public private(set) var momentumScale : Float = 0.2
+    
     var graph : MPSNNGraph?
     
     var datasources = [SketchCNNDatasource]()
@@ -31,15 +33,17 @@ public class SketchCNN{
                 numberOfClasses:Int,
                 weightsPathURL:URL,
                 mode:NetworkMode=NetworkMode.training,
-                learningRate:Float=0.001){
+                learningRate:Float=0.001,
+                momentumScale:Float=0.2){
         
+        self.commandQueue = commandQueue
         self.device = commandQueue.device
         self.inputShape = inputShape
         self.numberOfClasses = numberOfClasses
         self.weightsPathURL = weightsPathURL
         self.mode = mode
-        self.commandQueue = commandQueue
         self.learningRate = learningRate
+        self.momentumScale = momentumScale
         
         if mode == .training{
             self.graph = self.createTrainingGraph()
@@ -214,7 +218,7 @@ extension SketchCNN{
 
         let optimizer = MPSNNOptimizerStochasticGradientDescent(
             device: self.device,
-            momentumScale: 0.2,
+            momentumScale: self.momentumScale,
             useNestrovMomentum: true,
             optimizerDescriptor: optimizerDescriptor)
         
@@ -383,7 +387,7 @@ extension SketchCNN{
     public func train(
         withDataLoaderForTraining trainDataLoader:DataLoader,
         dataLoaderForValidation validDataLoader:DataLoader? = nil,
-        epochs : Int = 500,
+        epochs : Int = 250,
         completionHandler handler: @escaping () -> Void) -> [(epoch:Int, accuracy:Float)]{
         
         var validationAccuracy = [(epoch:Int, accuracy:Float)]()
@@ -421,13 +425,19 @@ extension SketchCNN{
                 // Update and validate model every 5 epochs or on the last epoch
                 if epoch % 5 == 0 || epoch == epochs{
                     print("Finished epoch \(epoch)")
+                    
                     updateDatasources()
                     
+                    let trainAccuracy = self.validate(withDataLoader: trainDataLoader)
+                    
                     if let validDataLoader = validDataLoader{
-                        let accuracy = self.validate(withDataLoader: validDataLoader)
-                        print("Model Accuracy after \(epoch) epoch(s) is \(accuracy)")
-
-                        validationAccuracy.append((epoch: epoch, accuracy:accuracy))
+                        let validAccuracy = self.validate(withDataLoader: validDataLoader)
+                        
+                        print("After \(epoch) epoch(s): Train accuracy is \(trainAccuracy) and validation accuracy is \(validAccuracy)")
+                        
+                        validationAccuracy.append((epoch: epoch, accuracy:validAccuracy))
+                    } else{
+                        print("After \(epoch) epoch(s): Train accuracy is \(trainAccuracy)")
                     }
                 }
             }
@@ -526,32 +536,14 @@ extension SketchCNN{
         for datasource in self.datasources{
             datasource.synchronizeParameters(on: commandBuffer)
         }
-        
-//        /// DEV
-//        for datasource in self.datasources{
-//            datasource.momentumVectors?[0].synchronize(on: commandBuffer)
-//            datasource.velocityVectors?[0].synchronize(on: commandBuffer)
-//        }
-//        ///
 
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
-        /// DEV
-        if let wb = self.datasources[0].weightsAndBiasesState{
-            let wtData = wb.weights.toArray(type: Float.self)
-            let bData = wb.biases!.toArray(type: Float.self)
-            print("\(wtData[0..<10])")
-            print("\(bData[0..<10])")
-        }
-        ///
         
         // Persist the weightds and bias terms to disk
         for datasource in self.datasources{
             datasource.saveParametersToDisk()
         }
-        
-//        self.graph?.reloadFromDataSources()
     }
     
     private func createTrainingGraph() -> MPSNNGraph?{

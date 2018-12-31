@@ -11,5 +11,5 @@ extension MTLBuffer{
             data.append(result[i])
         }
         return data
-    }    
+    }
 }
