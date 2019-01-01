@@ -1,4 +1,7 @@
-//: [Previous](@previous)
+/*:
+ ## Inference
+ In this page we use test our model using inputs by you - enable **Assistant Editor** to expose the canvas to draw in. Click on the **Tick** icon to submit your sketch to the model or **Cross** icon to clear the canvas.
+ */
 
 import Foundation
 import AppKit
@@ -121,7 +124,7 @@ PlaygroundPage.current.liveView = SketchCanvasView(
             withBytes: context.data!,
             bytesPerRow: bytesPerRow)
         
-        let img = placeholderImage
+//        let img = placeholderImage // Uncomment this to see the image being passed into the network
         
         if let probabilities = network.predict(X: [placeholderImage]){
             // Expecting only a single imasge being passed to our network for inference
@@ -131,17 +134,31 @@ PlaygroundPage.current.liveView = SketchCanvasView(
                 probabilities[0][$0] > probabilities[0][$1]
             }
             
-            let prob1 = String(format: "%.2f", probabilities[0][sortedIndies[0]])
-            let label1 = labels[sortedIndies[0]]
+            let probAtIndex0 = String(format: "%.2f", probabilities[0][sortedIndies[0]])
+            let labelAtIndex0 = labels[sortedIndies[0]]
             
-            let prob2 = String(format: "%.2f", probabilities[0][sortedIndies[1]])
-            let label2 = labels[sortedIndies[1]]
+            var text = "I guess you are drawing a \(labelAtIndex0) (\(probAtIndex0))"
             
+            var accumulatedProbability = probabilities[0][sortedIndies[0]]
+            var currentIndex = 1
             
-            let text = "I guess you are drawing either a \(label1) (\(prob1)) or \(label2) (\(prob2))"
+            while accumulatedProbability < 0.7{
+                let currentProb = String(format: "%.2f", probabilities[0][sortedIndies[currentIndex]])
+                let currentLabel = labels[sortedIndies[currentIndex]]
+                
+                accumulatedProbability += probabilities[0][sortedIndies[currentIndex]]
+                text += " or \(currentLabel) (\(currentProb))"
+                
+                currentIndex += 1
+            }
             
             view.text = text
+            print(text)
         }
 })
 
-//: [Next](@next)
+/*:
+ [Goto the **Validation** page](Validation)
+ 
+ [Goto the **Training** page](Training)
+ */

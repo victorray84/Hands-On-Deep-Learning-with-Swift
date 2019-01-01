@@ -1,11 +1,23 @@
 /*:
  # [Hands-On Deep Learning with Swift]()
- ### Chapter 5 - Applying CNNs to recognise sketches
+ ### Chapter 5 - Applying CNNs to recognise sketches (COMPLETE) 
  *Writen by [Joshua Newnham](https://www.linkedin.com/in/joshuanewnham) and published by [Packt Publishing](https://www.packtpub.com/big-data-and-business-intelligence/machine-learning-core-ml)*
  
  **Playground Pages**
  - [Training](Training) page to train our model
  - [Inference](Inference) page to use our model to perform inference on our own sketches
+ */
+
+/*:
+ ## Validation
+ In this page we use assess our model using the validation set; initially performed will give us a
+ base score that we can use for reference to determine if our model is learning or not. After training
+ we use this dataset to assess how well the model performs on data it **hasn't** seen during training.
+ 
+ Typically (in production) the dataset is split into three groups;
+ 1. Training; data your model is exposed to
+ 2. Validation; data you assess how well your model is learning. This in turn is used to tweak the architecture and hyperparameters
+ 3. Test; data which is used to verify how well you model performs on unseen data (which has not been used to influence the model or hyperparameters)
  */
 
 import Foundation
@@ -104,4 +116,8 @@ let accuracy = predictionsCorrectCount/sampleCount
 
 print("Validation accuracy \(accuracy)")
 
-//: [Goto next Page](@next)
+/*:
+ [Goto the **Training** page](Training)
+ 
+ [Goto the **Inference** page](Inference)
+ */

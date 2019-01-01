@@ -366,6 +366,7 @@ extension SketchCNN{
         // OUTPUT = numberOfClasses
         
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
+        softmax.resultImage.format = .float16
         softmax.label = "output"
         
         guard let graph = MPSNNGraph(

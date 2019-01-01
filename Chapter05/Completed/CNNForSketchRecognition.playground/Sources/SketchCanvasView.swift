@@ -179,7 +179,7 @@ extension SketchCanvasView{
         }
         
         context.setStrokeColor(NSColor.white.cgColor)
-        context.setLineWidth(10.0)
+        context.setLineWidth(5.0)
         
         for stroke in self.strokes{
             context.beginPath()

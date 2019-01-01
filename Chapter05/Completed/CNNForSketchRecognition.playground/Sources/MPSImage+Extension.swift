@@ -32,7 +32,7 @@ public extension MPSImage{
      */
     @nonobjc public func toFloatArray() -> [Float]?{
         switch pixelFormat {
-        case .r16Float, .rg16Float, .rgba16Float:
+        case .r16Float, .rg16Float, .rgba16Float:            
             if var float16Array = self.toArray(padding: UInt16(0)){
                 return self.convertUInt16ToFloat(&float16Array)
             }

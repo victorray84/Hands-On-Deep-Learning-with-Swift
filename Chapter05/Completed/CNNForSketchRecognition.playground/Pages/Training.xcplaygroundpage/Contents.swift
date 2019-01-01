@@ -1,4 +1,7 @@
-//: [Previous](@previous)
+/*:
+ ## Training
+ In this page we train our network using our training set. The implementation of this is encapsulated in the associated Swift files and described in detail in Chapter 5 of the associated book - Hands-on Deep Learning with Swift.
+ */
 
 import Foundation
 import AppKit
@@ -89,4 +92,8 @@ network.train(
         print("=== Training did finish ===")
 }
 
-//: [Next](@next)
+/*:
+[Goto the **Validation** page](Validation)
+ 
+[Goto the **Inference** page](Inference)
+*/
