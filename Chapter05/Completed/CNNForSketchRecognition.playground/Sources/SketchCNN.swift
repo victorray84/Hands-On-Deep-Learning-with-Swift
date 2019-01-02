@@ -418,9 +418,6 @@ extension SketchCNN{
                     latestCommandBuffer?.waitUntilCompleted()
                 }
                 
-                // reset Data loader
-                trainDataLoader.reset()
-                
                 // Update and validate model every 5 epochs or on the last epoch
                 if epoch % 5 == 0 || epoch == epochs{
                     print("Finished epoch \(epoch)")
@@ -476,8 +473,6 @@ extension SketchCNN{
         
         commandBuffer.commit()
         
-        //        commandBuffer.waitUntilCompleted()
-        
         return commandBuffer
     }
     
@@ -530,31 +525,13 @@ extension SketchCNN{
             datasource.synchronizeParameters(on: commandBuffer)
         }
         
-        //        /// DEV
-        //        for datasource in self.datasources{
-        //            datasource.momentumVectors?[0].synchronize(on: commandBuffer)
-        //            datasource.velocityVectors?[0].synchronize(on: commandBuffer)
-        //        }
-        //        ///
-        
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
-        /// DEV
-        if let wb = self.datasources[0].weightsAndBiasesState{
-            let wtData = wb.weights.toArray(type: Float.self)
-            let bData = wb.biases!.toArray(type: Float.self)
-            print("\(wtData[0..<10])")
-            print("\(bData[0..<10])")
-        }
-        ///
         
         // Persist the weightds and bias terms to disk
         for datasource in self.datasources{
             datasource.saveParametersToDisk()
         }
-        
-        //        self.graph?.reloadFromDataSources()
     }
     
     private func createTrainingGraph() -> MPSNNGraph?{

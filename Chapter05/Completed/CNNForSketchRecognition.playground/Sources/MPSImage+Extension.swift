@@ -32,7 +32,7 @@ public extension MPSImage{
      */
     @nonobjc public func toFloatArray() -> [Float]?{
         switch pixelFormat {
-        case .r16Float, .rg16Float, .rgba16Float:            
+        case .r16Float, .rg16Float, .rgba16Float:
             if var float16Array = self.toArray(padding: UInt16(0)){
                 return self.convertUInt16ToFloat(&float16Array)
             }
@@ -107,7 +107,9 @@ public extension MPSImage{
                                           width: UInt(outputUInt16.count),
                                           rowBytes: outputUInt16.count * 4)
         
-        if vImageConvert_Planar16FtoPlanarF(&bufferUInt16, &bufferFloat32, 0) != kvImageNoError {
+        if vImageConvert_Planar16FtoPlanarF(
+            &bufferUInt16,
+            &bufferFloat32, 0) != kvImageNoError {
             print("Failed to convert UInt16 array to Float32 array")
             return nil
         }
