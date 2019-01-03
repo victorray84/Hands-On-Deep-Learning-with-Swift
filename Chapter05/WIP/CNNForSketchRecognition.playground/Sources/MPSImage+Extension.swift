@@ -5,7 +5,21 @@ import Accelerate
 
 public extension MPSImage{
     
-    public func toFloatArray() -> [Float]?{
+    @nonobjc public func toFloatArray() -> [Float]?{
+        switch pixelFormat {
+        case .r16Float, .rg16Float, .rgba16Float:
+            if var float16Array = self.toArray(padding: UInt16(0)){
+                return self.convertUInt16ToFloat(&float16Array)
+            }
+            return nil
+        case .r32Float, .rg32Float, .rgba32Float:
+            return self.toArray(padding: Float(0.0))
+        default:
+            fatalError("Unsupported pixelFormat \(pixelFormat)")
+        }
+    }
+    
+    private func toArray<T>(padding:T) -> [T]?{
         /*
          An MPSImage object can contain multiple CNN images for batch processing. In order
          to create an MPSImage object that contains N images, create an MPSImageDescriptor object
@@ -34,7 +48,7 @@ public extension MPSImage{
         
         let count =  self.width * self.height * totalChannels * self.numberOfImages
         
-        var outputUInt16 = [UInt16](repeating: 0, count: count)
+        var output = [T](repeating: padding, count: count)
         
         let bytesPerRow = self.width * paddedFeatureChannels * MemoryLayout<UInt16>.size
         
@@ -43,7 +57,7 @@ public extension MPSImage{
             size: MTLSize(width: self.width, height: self.height, depth: 1))
         
         for sliceIndex in 0..<numberOfSlices{
-            self.texture.getBytes(&(outputUInt16[stride * sliceIndex]),
+            self.texture.getBytes(&(output[stride * sliceIndex]),
                                   bytesPerRow:bytesPerRow,
                                   bytesPerImage:0,
                                   from: region,
@@ -51,6 +65,30 @@ public extension MPSImage{
                                   slice:sliceIndex)
         }
         
+//        // Convert UInt16 array into Float32 (Float in Swift)
+//        var output = [Float](repeating: 0, count: outputUInt16.count)
+//
+//        var bufferUInt16 = vImage_Buffer(data: &outputUInt16,
+//                                         height: 1,
+//                                         width: UInt(outputUInt16.count),
+//                                         rowBytes: outputUInt16.count * 2)
+//
+//        var bufferFloat32 = vImage_Buffer(data: &output,
+//                                          height: 1,
+//                                          width: UInt(outputUInt16.count),
+//                                          rowBytes: outputUInt16.count * 4)
+//
+//        if vImageConvert_Planar16FtoPlanarF(
+//            &bufferUInt16,
+//            &bufferFloat32, 0) != kvImageNoError {
+//            print("Failed to convert UInt16 array to Float32 array")
+//            return nil
+//        }
+        
+        return output
+    }
+    
+    private func convertUInt16ToFloat(_ outputUInt16: inout [UInt16]) -> [Float]?{
         // Convert UInt16 array into Float32 (Float in Swift)
         var output = [Float](repeating: 0, count: outputUInt16.count)
         

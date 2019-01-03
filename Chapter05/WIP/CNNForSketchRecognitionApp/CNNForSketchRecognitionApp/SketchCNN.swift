@@ -423,7 +423,7 @@ extension SketchCNN{
                 trainDataLoader.reset()
                 
                 // Update and validate model every 5 epochs or on the last epoch
-                if epoch % 5 == 0 || epoch == epochs{
+                if epoch % 1 == 0 || epoch == epochs{
                     print("Finished epoch \(epoch)")
                     
                     updateDatasources()
