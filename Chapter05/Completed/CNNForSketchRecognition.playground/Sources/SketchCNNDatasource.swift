@@ -26,7 +26,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     //var cnnConvolution : MPSCNNConvolution?
     
     var momentumVectors : [MPSVector]?
-    
+
     var weightsLength : Int{
         get{
             return self.outputFeatureChannels
@@ -35,7 +35,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
                 * self.inputFeatureChannels
         }
     }
-    
+
     var biasTermsLength : Int{
         get{
             return self.outputFeatureChannels

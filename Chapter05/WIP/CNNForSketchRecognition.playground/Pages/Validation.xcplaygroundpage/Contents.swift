@@ -1,6 +1,6 @@
 /*:
  # [Hands-On Deep Learning with Swift]()
- ### Chapter 5 - Applying CNNs to recognise sketches (START) 
+ ### Chapter 5 - Applying CNNs to recognise sketches (WIP) 
  *Writen by [Joshua Newnham](https://www.linkedin.com/in/joshuanewnham) and published by [Packt Publishing](https://www.packtpub.com/big-data-and-business-intelligence/machine-learning-core-ml)*
  
  **Playground Pages**

@@ -4,11 +4,18 @@ import MetalPerformanceShaders
 
 public class DataLoader{
     
+    /// Property of the MPSImageDescriptor to describe the channel format
     public let channelFormat = MPSImageFeatureChannelFormat.unorm8
+    /// Property of the MPSImageDescriptor to describe the image width
     public let imageWidth  = 128
+    /// Property of the MPSImageDescriptor to describe the image height
     public let imageHeight = 128
+    /// Property of the MPSImageDescriptor to describe the number of channels (1 being grayscale)
     public let featureChannels = 1
+    /// Number of classes in our dataset
     public var numberOfClasses : Int = 22
+    
+    /// Enable to have each batch first shuffled before retrieving
     public var shuffle : Bool = true
     
     // Used to create the batches; populated each time the batch is reset
@@ -18,7 +25,41 @@ public class DataLoader{
     // List of labesl (where their index corresponds to the index returned by the network)
     public var labels = [String]()
     
+    /// Total number of files
+    var count : Int{
+        return self.sketchFileUrls.reduce(0, { total, kvp in
+            return total + kvp.value.count
+        })
+    }
+    
+    private let device : MTLDevice
+    
+    /// Size of our mini-batches
+    public private(set) var batchSize : Int = 0
+    
+    // Where the images reside
+    private let sourcePathURL : URL
+    
     /*
+     The size of our MPSImage pool that is used by the DataLoader (this to
+     avoid repeatitive allocation
+     */
+    private var poolSize : Int{
+        get{
+            return self.batchSize * 3
+        }
+    }
+    
+    /// The pool of MPSImages
+    var mpsImagePool = [MPSImage]()
+    
+    /// Pointer into our pool of MPSImage objects
+    private var mpsImagePoolIndex = 0
+    
+    /// Current sample index
+    private var currentIndex = 0
+    
+    /*:
      A MPSImageDescriptor object describes a attributes of MPSImage and is used to
      create one (see MPSImage discussion below)
      */
@@ -36,38 +77,6 @@ public class DataLoader{
         
         return imageDescriptor
     }()
-    
-    /** Total number of files */
-    var count : Int{
-        return self.sketchFileUrls.reduce(0, { total, kvp in
-            return total + kvp.value.count
-        })
-    }
-    
-    let device : MTLDevice
-    
-    public private(set) var batchSize : Int = 0
-    
-    let sourcePathURL : URL
-    
-   /*
-     The size of our MPSImage pool that is used by the DataLoader (this to
-    avoid repeatitive allocation
-    */
-    private var poolSize : Int{
-        get{
-            return self.batchSize * 3
-        }
-    }
-    
-    /** The pool of MPSImages */
-    var mpsImagePool = [MPSImage]()
-    
-    /** Pointer into our pool of MPSImage objects **/
-    private var mpsImagePoolIndex = 0
-    
-    /** Current sample index */
-    private var currentIndex = 0
     
     public init(device:MTLDevice,
                 sourcePathURL:URL,
@@ -111,17 +120,7 @@ public class DataLoader{
     private func setLabels(){
         self.labels.removeAll()
         self.labels.append(contentsOf: Array(self.sketchFileUrls.keys).sorted())
-    }
-    
-    public static func getBatchCount(batch:Batch?) -> Int{
-        guard let batch = batch else{
-            return 0
-        }
-        
-        assert(batch.images.count == batch.labels.count)
-        
-        return batch.images.count
-    }
+    }    
 }
 
 // MARK: - Sample methods
@@ -164,15 +163,15 @@ extension DataLoader{
         }
     }
     
-    /** Call this before begining a batch; this resets the current index and pooling index */
+    /// Call this before begining a batch; this resets the current index and pooling index
     public func reset(){
         self.currentIndex = 0
         self.mpsImagePoolIndex = 0
-        
+
         self.populateBatchPool()
     }
     
-    /** Return true if there is another batch available to consume */
+    /// Return true if there is another batch available to consume
     public func hasNext() -> Bool{
         return (self.currentIndex + self.batchSize) <= self.count
     }
@@ -185,17 +184,17 @@ extension DataLoader{
         if self.mpsImagePool.count < self.poolSize{
             self.initMpsImagePool()
         }
-        
+
         var batchImages = [MPSImage]()
         var batchLabels = [MPSCNNLossLabels]()
-        
+
         // Get current batch range
         let range = self.currentIndex..<(self.currentIndex + self.batchSize)
         // Get slice
         let batchLookups = self.batchPool[range]
         // Advance index
         self.currentIndex += self.batchSize
-        
+
         // Populate batch
         for batchLookup in batchLookups{
             // vectorise label
@@ -204,7 +203,9 @@ extension DataLoader{
             }
             
             // get the image for a specific label and index
-            guard let imageData = self.loadImageData(forLabel: batchLookup.label, atIndex: batchLookup.index) else{
+            guard let imageData = self.loadImageData(
+                forLabel: batchLookup.label,
+                atIndex: batchLookup.index) else{
                 fatalError("No image found for label \(batchLookup.label) at index \(batchLookup.index)")
             }
             
@@ -225,9 +226,9 @@ extension DataLoader{
             self.mpsImagePoolIndex += 1
             self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
         }
-        
+
         return Batch(images:batchImages, labels:batchLabels)
-    }
+        }
 }
 
 // MARK: - Image loading

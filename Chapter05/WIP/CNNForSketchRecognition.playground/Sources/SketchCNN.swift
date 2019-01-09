@@ -69,9 +69,62 @@ extension SketchCNN{
                          poolSize : Int = 2,
                          dropoutProbability:Float=0.0) -> [MPSNNFilterNode]{
         
-        // TODO Implement convolutional block
+        let datasource = SketchCNNDatasource(
+            name: name,
+            weightsPathURL:self.weightsPathURL,
+            kernelSize: kernelSize,
+            strideSize: strideSize,
+            inputFeatureChannels: inputFeatureChannels,
+            outputFeatureChannels: outputFeatureChannels,
+            optimizer: self.makeOptimizer())
         
-        return []
+        if self.mode == .training{
+            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
+                device: self.device,
+                cnnConvolutionDescriptor: datasource.descriptor())
+            
+            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
+                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
+                
+                datasource.momentumVectors = [weightsMomentum, biasMomentum]
+            }
+        }
+        
+        self.datasources.append(datasource)
+        
+        let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
+        conv.resultImage.format = .float32
+        conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
+        conv.label = "\(name)_conv"
+        
+        let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
+        relu.resultImage.format = .float32
+        relu.label = "\(name)_relu"
+        
+        var layers = [conv, relu]
+        
+        if includeMaxPooling{
+            let pooling = MPSCNNPoolingMaxNode(
+                source: relu.resultImage,
+                filterSize: poolSize)
+            pooling.resultImage.format = .float32
+            pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+            pooling.label = "\(name)_maxpooling"
+            
+            layers.append(pooling)
+        }
+        
+        if self.mode != .inference && dropoutProbability > 0.0{
+            let dropout = MPSCNNDropoutNode(
+                source: layers.last!.resultImage,
+                keepProbability: (1.0 - dropoutProbability))
+            dropout.resultImage.format = .float32
+            dropout.label = "\(name)_dropout"
+            
+            layers.append(dropout)
+        }
+        
+        return layers
     }
     
     func createDenseLayer(
@@ -83,14 +136,78 @@ extension SketchCNN{
         includeActivation:Bool=true,
         dropoutProbability:Float=0.0) -> [MPSNNFilterNode]{
         
-        // TODO Implement dense layer block
+        let datasource = SketchCNNDatasource(
+            name: name,
+            weightsPathURL:self.weightsPathURL,
+            kernelSize: kernelSize,
+            inputFeatureChannels: inputFeatureChannels,
+            outputFeatureChannels: outputFeatureChannels,
+            optimizer: self.makeOptimizer())
+
+        if self.mode == .training{
+            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
+                device: self.device,
+                cnnConvolutionDescriptor: datasource.descriptor())
+            
+            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
+                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
+                
+                datasource.momentumVectors = [weightsMomentum, biasMomentum]
+            }
+            
+        }
+
+        self.datasources.append(datasource)
         
-        return []
+        let fc = MPSCNNFullyConnectedNode(
+            source: x,
+            weights: datasource)
+
+        fc.resultImage.format = .float32
+        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+        fc.label = "\(name)_fc"
+
+        var layers = [MPSNNFilterNode](arrayLiteral: fc)
+
+        if includeActivation{
+            let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
+            relu.resultImage.format = .float32
+            relu.label = "\(name)_relu"
+            
+            layers.append(relu)
+        }
+
+        if self.mode == .training && dropoutProbability > 0.0{
+            let dropout = MPSCNNDropoutNode(
+                source: layers.last!.resultImage,
+                keepProbability: (1.0 - dropoutProbability))
+            dropout.resultImage.format = .float32
+            dropout.label = "\(name)_dropout"
+            
+            layers.append(dropout)
+        }
+
+        return layers
     }
     
     private func makeMPSVector(count:Int, repeating:Float=0.0) -> MPSVector?{
-        // TODO Create Vector
-        return nil
+        // Create a Metal buffer
+        guard let buffer = self.device.makeBuffer(
+            bytes: Array<Float32>(repeating: repeating, count: count),
+            length: count * MemoryLayout<Float32>.size,
+            options: [.storageModeShared]) else{
+                return nil
+        }
+        
+        // Create a vector descriptor
+        let desc = MPSVectorDescriptor(
+            length: count, dataType: MPSDataType.float32)
+        
+        // Create a vector with descriptor
+        let vector = MPSVector(
+            buffer: buffer, descriptor: desc)
+        
+        return vector
     }
     
     private func makeOptimizer() -> MPSNNOptimizerStochasticGradientDescent?{
@@ -98,8 +215,23 @@ extension SketchCNN{
             return nil
         }
         
-        // TODO Create an instance of an MPSNNOptimizerStochasticGradientDescent with momentum
-        return nil
+        let optimizerDescriptor = MPSNNOptimizerDescriptor(
+            learningRate: self.learningRate,
+            gradientRescale: 1.0,
+            regularizationType: MPSNNRegularizationType.None,
+            regularizationScale: 1.0)
+        
+        let optimizer = MPSNNOptimizerStochasticGradientDescent(
+            device: self.device,
+            momentumScale: self.momentumScale,
+            useNestrovMomentum: true,
+            optimizerDescriptor: optimizerDescriptor)
+        
+        optimizer.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
+        
+        //print(optimizer.debugDescription)
+        
+        return optimizer
     }
 }
 
@@ -150,16 +282,115 @@ extension SketchCNN{
         // TODO Create inference graph
         
         // 1. Create Input node
+        // placeholder node
+        let input = MPSNNImageNode(handle: nil)
+        
+        // INPUT = 128x128x1
+        
+        // Scale
+        let scale = MPSNNLanczosScaleNode(
+            source: input,
+            outputSize: MTLSize(
+                width: self.inputShape.width,
+                height: self.inputShape.height,
+                depth: 1))
+        
+        // OUTPUT = 128x128x1
         
         // 2. Create convolutional layers
+        // layer 1
+        let layer1Nodes = self.createConvLayer(
+            name: "l1",
+            x: scale.resultImage,
+            kernelSize: KernelSize(width:7, height:7),
+            strideSize: KernelSize(width:2, height:2),
+            inputFeatureChannels: 1,
+            outputFeatureChannels: 32,
+            includeMaxPooling: false,
+            poolSize: 0,
+            dropoutProbability: 0.3)
+
+        // OUTPUT = 64x64x32
+
+        // layer 2
+        let layer2Nodes = self.createConvLayer(
+            name: "l2",
+            x: layer1Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2)
+
+        // OUTPUT = 32x32x32
+
+        // layer 3
+        let layer3Nodes = self.createConvLayer(
+            name: "l3",
+            x: layer2Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
+
+        // OUTPUT = 16x16x32
+
+        let layer4Nodes = self.createConvLayer(
+            name: "l4",
+            x: layer3Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
+
+        // OUTPUT = 8x8x32
         
         // 3. Create dense layers
+        // fully connected layer
+        let layer5Nodes = createDenseLayer(
+            name: "l5",
+            x: layer4Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:8, height:8),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 64,
+            includeActivation: true,
+            dropoutProbability: 0.3)
+
+        // OUTPUT = 64
+
+        let layer6Nodes = createDenseLayer(
+            name: "l6",
+            x: layer5Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 64,
+            outputFeatureChannels: self.numberOfClasses,
+            includeActivation: false)
+
+        // OUTPUT = numberOfClasses
         
         // 4. Create SoftMax layer
         
+        let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
+        softmax.resultImage.format = .float16
+        softmax.label = "output"
+        
         // 5. Create and return Graph
         
-        return nil
+        guard let graph = MPSNNGraph(
+            device: device,
+            resultImage: softmax.resultImage,
+            resultImageIsNeeded: true) else{
+                return nil
+        }
+
+        return graph
     }
 }
 
@@ -175,22 +406,41 @@ extension SketchCNN{
         // Store validation accuracy as we train
         var validationAccuracy = [(epoch:Int, accuracy:Float)]()
         
-        // TODO Create semaphore to coordinate (and work effectively with) the CPU and GPU activity
+        let trainingSemaphore = DispatchSemaphore(value:2)
         
-        // TODO Create variable to hold reference of the last command buffer
+        var latestCommandBuffer : MTLCommandBuffer?
         
         // TODO Check initial validation score
         
         for epoch in 1...epochs{
             autoreleasepool{
-                // TODO Reset the dataloader
+                trainDataLoader.reset()
                 
-                // TODO iterate through all the batches; performing a single training set on each
+                while trainDataLoader.hasNext(){
+                    latestCommandBuffer = self.trainStep(
+                        withDataLoader: trainDataLoader,
+                        semaphore: trainingSemaphore)
+                }
                 
-                // TODO wait for the final training step to complete
+                // wait for training to complete
+                if latestCommandBuffer?.status != .completed{
+                    latestCommandBuffer?.waitUntilCompleted()
+                }
                 
                 // TODO Update and validate model every 5 epochs or on the last epoch
                 // ... and output accuracy against the validation set
+                if epoch % 5 == 0 || epoch == epochs{
+                    print("Finished epoch \(epoch)")
+                    updateDatasources()
+                    
+                    if let validDataLoader = validDataLoader{
+                        let accuracy = self.validate(
+                            withDataLoader: validDataLoader)
+                        print("Model Accuracy after \(epoch) epoch(s) is \(accuracy)")
+                        
+                        validationAccuracy.append((epoch: epoch, accuracy:accuracy))
+                    }
+                }
             }
         }
         
@@ -201,7 +451,9 @@ extension SketchCNN{
         return validationAccuracy
     }
     
-    private func trainStep(withDataLoader dataLoader:DataLoader, semaphore:DispatchSemaphore) -> MTLCommandBuffer?{
+    private func trainStep(
+        withDataLoader dataLoader:DataLoader,
+        semaphore:DispatchSemaphore) -> MTLCommandBuffer?{
         let _ = semaphore.wait(timeout: .distantFuture)
         
         guard let graph = self.graph else{
@@ -209,22 +461,42 @@ extension SketchCNN{
             return nil
         }
         
-        // TODO Make a command buffer to execute the passing step on
+        // Get command buffer to use in MetalPerformanceShaders.
+        guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
+            semaphore.signal()
+            return nil
+        }
         
-        // TODO Get next batch
+        // Get next batch
+        guard let batch = dataLoader.nextBatch(commandBuffer:commandBuffer) else{
+            semaphore.signal()
+            return nil
+        }
         
-        // TODO Encode (passing in input and labels)
+        graph.encodeBatch(to: commandBuffer,
+                          sourceImages: [batch.images],
+                          sourceStates: [batch.labels],
+                          intermediateImages: nil,
+                          destinationStates: nil)
         
-        // TODO Handle when the training step is complete and signal to the semaphore
         
-        // TODO Commit job
+        commandBuffer.addCompletedHandler({ (commandBuffer) in
+            semaphore.signal()
+        })
         
-        // TODO Return created command buffer
-        return nil
+        commandBuffer.commit()
+        
+        return commandBuffer
     }
     
     func validate(withDataLoader dataLoader:DataLoader) -> Float{
         // TODO Create an inference network
+        let inferenceNetwork = SketchCNN(
+            withCommandQueue: self.commandQueue,
+            inputShape: self.inputShape,
+            numberOfClasses: self.numberOfClasses,
+            weightsPathURL: self.weightsPathURL,
+            mode: .inference)
         
         var sampleCount : Float = 0.0
         var predictionsCorrectCount : Float = 0.0
@@ -232,11 +504,27 @@ extension SketchCNN{
         // TODO Reset dataloader
         dataLoader.reset()
         
-        // TODO Iterate over all batches of the dataloader
-        
-        // TODO For each batch
-        // 1. Perform inference
-        // 2. Count how many we got right
+        while dataLoader.hasNext(){
+            autoreleasepool{
+                guard let commandBuffer = commandQueue.makeCommandBuffer() else{
+                    fatalError()
+                }
+                
+                if let batch = dataLoader.nextBatch(commandBuffer: commandBuffer){
+                    if let predictions = inferenceNetwork.predict(X: batch.images){
+                        assert(predictions.count == batch.labels.count)
+                        
+                        for i in 0..<predictions.count{
+                            sampleCount += 1.0
+                            let predictedClass = dataLoader.labels[predictions[i].argmax]
+                            let actualClass = batch.labels[i].label ?? ""
+                            
+                            predictionsCorrectCount += predictedClass == actualClass ? 1.0 : 0.0
+                        }
+                    }
+                }
+            }
+        }
         
         return predictionsCorrectCount/sampleCount
     }
@@ -262,15 +550,215 @@ extension SketchCNN{
     
     private func createTrainingGraph() -> MPSNNGraph?{
         
-        // TODO Create input node
+        // placeholder node
+        let input = MPSNNImageNode(handle: nil)
         
-        // TODO Create nodes assoicated with the forward pass (same as the createInferenceGraph)
+        // INPUT = 128x128x1
+        
+        // Scale
+        let scale = MPSNNLanczosScaleNode(
+            source: input,
+            outputSize: MTLSize(
+                width: self.inputShape.width,
+                height: self.inputShape.height,
+                depth: 1))
+        
+        // OUTPUT = 128x128x1
+        
+        // layer 1
+        let layer1Nodes = self.createConvLayer(
+            name: "l1",
+            x: scale.resultImage,
+            kernelSize: KernelSize(width:7, height:7),
+            strideSize: KernelSize(width:2, height:2),
+            inputFeatureChannels: 1,
+            outputFeatureChannels: 32,
+            includeMaxPooling: false,
+            poolSize: 0,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 64x64x32
+        
+        // layer 2
+        let layer2Nodes = self.createConvLayer(
+            name: "l2",
+            x: layer1Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2)
+        
+        // OUTPUT = 32x32x32
+        
+        // layer 3
+        let layer3Nodes = self.createConvLayer(
+            name: "l3",
+            x: layer2Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 16x16x32
+        
+        let layer4Nodes = self.createConvLayer(
+            name: "l4",
+            x: layer3Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:5, height:5),
+            strideSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 32,
+            includeMaxPooling: true,
+            poolSize: 2,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 8x8x32
+        
+        // fully connected layer
+        let layer5Nodes = createDenseLayer(
+            name: "l5",
+            x: layer4Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:8, height:8),
+            inputFeatureChannels: 32,
+            outputFeatureChannels: 64,
+            includeActivation: true,
+            dropoutProbability: 0.3)
+        
+        // OUTPUT = 64
+        
+        let layer6Nodes = createDenseLayer(
+            name: "l6",
+            x: layer5Nodes.last!.resultImage,
+            kernelSize: KernelSize(width:1, height:1),
+            inputFeatureChannels: 64,
+            outputFeatureChannels: self.numberOfClasses,
+            includeActivation: false)
+        
+        // OUTPUT = numberOfClasses
+        
+        let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         
         // TODO Create loss node
+        // Loss function
+        let lossDesc = MPSCNNLossDescriptor(
+            type: MPSCNNLossType.softMaxCrossEntropy,
+            reductionType: MPSCNNReductionType.mean)
+        lossDesc.numberOfClasses = self.numberOfClasses
+
+        let loss = MPSCNNLossNode(
+            source: softmax.resultImage,
+            lossDescriptor: lossDesc)
         
         // TODO Create nodes associated with the backwards pass (reverse of the forward pass using the gradients)
+        loss.resultImage.format = .float32
+        let softmaxG = softmax.gradientFilter(withSource: loss.resultImage)
+        
+        // Keep track of the last nodes result image to pass it to the next
+        var lastResultImage = softmaxG.resultImage
+        lastResultImage.format = .float32
+
+        // Set training style; this can be sett via the trainingStyle property of a MPSCNNConvolutionGradientNode object.
+        // Valid value are:
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceCPU (to update on tthe CPU)
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceGPU (to update on tthe GPU
+        //  MPSCNNConvolutionGradientNode.MPSNNTrainingStyle.updateDeviceNone (don't update this layer)
+        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
+
+        let _ = layer6Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            
+            lastResultImage = gradientNode.resultImage
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
+        
+        let _ = layer5Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            
+            lastResultImage = gradientNode.resultImage
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
+        
+        let _ = layer4Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
+        
+        let _ = layer3Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
+        
+        let _ = layer2Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
+        
+        let _ = layer1Nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastResultImage)
+            lastResultImage = gradientNode.resultImage
+            
+            lastResultImage.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
+            
+            return gradientNode
+        }
         
         // TODO Create MPSNNGraph
+        if let graph = MPSNNGraph(
+            device: self.device,
+            resultImage: lastResultImage,
+            resultImageIsNeeded: false){
+            
+            graph.outputStateIsTemporary = true
+            
+            graph.format = .float32
+            
+            return graph
+        }
         
         return nil
     }

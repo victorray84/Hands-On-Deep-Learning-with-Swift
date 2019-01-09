@@ -4,12 +4,16 @@ import MetalPerformanceShaders
 
 public class DataLoader{
     
+    /// Property of the MPSImageDescriptor to describe the channel format
     public let channelFormat = MPSImageFeatureChannelFormat.unorm8
+    /// Property of the MPSImageDescriptor to describe the image width
     public let imageWidth  = 128
+    /// Property of the MPSImageDescriptor to describe the image height
     public let imageHeight = 128
+    /// Property of the MPSImageDescriptor to describe the number of channels (1 being grayscale)
     public let featureChannels = 1
+    /// Number of classes in our dataset
     public var numberOfClasses : Int = 22
-    public var shuffle : Bool = true
     
     // Used to create the batches; populated each time the batch is reset
     private var batchPool = [SampleLookup]()
@@ -18,7 +22,22 @@ public class DataLoader{
     // List of labesl (where their index corresponds to the index returned by the network)
     public var labels = [String]()
     
-    /*
+    /// Total number of files
+    var count : Int{
+        return self.sketchFileUrls.reduce(0, { total, kvp in
+            return total + kvp.value.count
+        })
+    }
+    
+    private let device : MTLDevice
+    
+    // Where the images reside
+    private let sourcePathURL : URL
+    
+    // TODO Declare properties to support batching
+    // shuffle, batchSize, poolSize, mpsImagePool, mpsImagePoolIndex, currentIndex
+    
+    /*:
      A MPSImageDescriptor object describes a attributes of MPSImage and is used to
      create one (see MPSImage discussion below)
      */
@@ -37,52 +56,14 @@ public class DataLoader{
         return imageDescriptor
     }()
     
-    /** Total number of files */
-    var count : Int{
-        return self.sketchFileUrls.reduce(0, { total, kvp in
-            return total + kvp.value.count
-        })
-    }
-    
-    let device : MTLDevice
-    
-    public private(set) var batchSize : Int = 0
-    
-    let sourcePathURL : URL
-    
-   /*
-     The size of our MPSImage pool that is used by the DataLoader (this to
-    avoid repeatitive allocation
-    */
-    private var poolSize : Int{
-        get{
-            return self.batchSize * 3
-        }
-    }
-    
-    /** The pool of MPSImages */
-    var mpsImagePool = [MPSImage]()
-    
-    /** Pointer into our pool of MPSImage objects **/
-    private var mpsImagePoolIndex = 0
-    
-    /** Current sample index */
-    private var currentIndex = 0
-    
+    // TODO Modify signature to include batchSize 
     public init(device:MTLDevice,
-                sourcePathURL:URL,
-                batchSize:Int=4){
+                sourcePathURL:URL){
         
         self.device = device
         self.sourcePathURL = sourcePathURL
         
         fetchSketchUrls()
-        
-        if batchSize <= 0{
-            self.batchSize = self.count
-        } else{
-            self.batchSize = batchSize
-        }
         
         setLabels()
         
@@ -112,121 +93,35 @@ public class DataLoader{
         self.labels.removeAll()
         self.labels.append(contentsOf: Array(self.sketchFileUrls.keys).sorted())
     }
-    
-    public static func getBatchCount(batch:Batch?) -> Int{
-        guard let batch = batch else{
-            return 0
-        }
-        
-        assert(batch.images.count == batch.labels.count)
-        
-        return batch.images.count
-    }
 }
 
 // MARK: - Sample methods
 
 extension DataLoader{
     
-    /** Create the pool og MPSImages which will be used and reused by the dataloader */
-    private func initMpsImagePool(){
-        self.mpsImagePool.removeAll()
-        
-        let descriptor = self.imageDescriptor
-        for _ in 0..<self.poolSize{
-            self.mpsImagePool.append(MPSImage(device: self.device, imageDescriptor: descriptor))
-        }
-    }
+    // TODO Implement a functino (initMpsImagePool) to initilize the MPSImage pool (reusable array of MPSImage objects)
     
-    private func populateBatchPool(){
-        batchPool.removeAll()
-        
-        // Keep track of how many we have added per label
-        var labelCounts = [String:Int]()
-        
-        // batchPool with all tuples of image labels and indicies pairs
-        var hasChanged = true
-        while hasChanged{
-            hasChanged = false
-            for label in self.labels{
-                let currentCount = labelCounts[label] ?? 0
-                if currentCount >= self.sketchFileUrls[label]!.count{
-                    continue // ignore
-                }
-                hasChanged = true // flag that we have changed
-                batchPool.append(SampleLookup(label:label, index:currentCount))
-                labelCounts[label] = currentCount + 1
-            }
-        }
-        
-        if self.shuffle{
-            batchPool.shuffle()
-        }
-    }
+    // TODO Implement a functino (populateBatchPool) to create an array of lookups for the whole dataset -
     
-    /** Call this before begining a batch; this resets the current index and pooling index */
+    /// Call this before begining a batch; this resets the current index and pooling index
     public func reset(){
-        self.currentIndex = 0
-        self.mpsImagePoolIndex = 0
-        
-        self.populateBatchPool()
+        // TODO Implement body to reset the data loader; called before each epoch
     }
     
-    /** Return true if there is another batch available to consume */
+    /// Return true if there is another batch available to consume
     public func hasNext() -> Bool{
-        return (self.currentIndex + self.batchSize) <= self.count
+        // TODO Implement body to return true if another batch is available otherwise false
+        return false
     }
     
-    /**
+    /*:
     Return the next available batch; its the developers responsibility to ensure that another batch is available
     before calling this method
      */
     public func nextBatch(commandBuffer:MTLCommandBuffer) -> Batch?{
-        if self.mpsImagePool.count < self.poolSize{
-            self.initMpsImagePool()
-        }
-        
-        var batchImages = [MPSImage]()
-        var batchLabels = [MPSCNNLossLabels]()
-        
-        // Get current batch range
-        let range = self.currentIndex..<(self.currentIndex + self.batchSize)
-        // Get slice
-        let batchLookups = self.batchPool[range]
-        // Advance index
-        self.currentIndex += self.batchSize
-        
-        // Populate batch
-        for batchLookup in batchLookups{
-            // vectorise label
-            guard let vecLabel = self.vectorizeLabel(label: batchLookup.label) else{
-                fatalError("No image found for label \(batchLookup.label)")
-            }
-            
-            // get the image for a specific label and index
-            guard let imageData = self.loadImageData(forLabel: batchLookup.label, atIndex: batchLookup.index) else{
-                fatalError("No image found for label \(batchLookup.label) at index \(batchLookup.index)")
-            }
-            
-            // get a unsafe pointer to our image data
-            let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
-            
-            // update the data of the associated MPSImage object (with the image data)
-            self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
-                dataPointer,
-                dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
-                imageIndex: 0)
-            
-            // add label and image to our batch
-            batchLabels.append(vecLabel)
-            batchImages.append(self.mpsImagePool[mpsImagePoolIndex])
-            
-            // increase pointer to our pool
-            self.mpsImagePoolIndex += 1
-            self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
-        }
-        
-        return Batch(images:batchImages, labels:batchLabels)
+        // TODO Implement body to return the next batch (using the batchPool to lookup the associated images and
+        // labels - we'll reuse the MPSImage's available in our pool to avoid the cost of object creation
+        return nil
     }
 }
 

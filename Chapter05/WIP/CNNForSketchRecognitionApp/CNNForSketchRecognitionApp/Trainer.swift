@@ -159,10 +159,32 @@ class Trainer{
         // Train
         print("=== Training will begin ===")
         
-        network.train(
+        let history = network.train(
             withDataLoaderForTraining: trainDataLoader,
             dataLoaderForValidation: validDataLoader) {
             print("=== Training did finish ===")
+        }
+        
+        let file = "training_history.csv"
+        
+        var text = ""
+        
+        for item in history{
+            if text.count > 0{
+                text += "\n"
+            }
+            text += "\(item.epoch),\(item.accuracy)"
+        }
+        
+        if let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            
+            let fileURL = dir.appendingPathComponent(file)
+            
+            //writing
+            do {
+                try text.write(to: fileURL, atomically: false, encoding: .utf8)
+            }
+            catch {/* error handling here */}
         }
     }
 }

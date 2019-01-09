@@ -387,7 +387,7 @@ extension SketchCNN{
     public func train(
         withDataLoaderForTraining trainDataLoader:DataLoader,
         dataLoaderForValidation validDataLoader:DataLoader? = nil,
-        epochs : Int = 250,
+        epochs : Int = 1500,
         completionHandler handler: @escaping () -> Void) -> [(epoch:Int, accuracy:Float)]{
         
         var validationAccuracy = [(epoch:Int, accuracy:Float)]()

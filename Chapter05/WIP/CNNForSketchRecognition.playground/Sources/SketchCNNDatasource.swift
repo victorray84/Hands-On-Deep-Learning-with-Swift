@@ -24,6 +24,7 @@ class SketchCNNDatasource : NSObject, MPSCNNConvolutionDataSource{
     
     // Reference to the underlying MPSCNNConvolution; useful for debugging
     //var cnnConvolution : MPSCNNConvolution?
+    var momentumVectors : [MPSVector]?
     
     // TODO add an array for the momentum vectors used during training
     
@@ -210,7 +211,12 @@ extension SketchCNNDatasource{
         // (instead of our approach of retaining explicit reference via the DataSources weightsAndBiasesState property)
         //self.cnnConvolution = gradientState.convolution
         
-        // TODO Use the optimizer to update the weightsAndBiasesState (passing in the momentum array) 
+        optimizer.encode(
+            commandBuffer: commandBuffer,
+            convolutionGradientState: gradientState,
+            convolutionSourceState: sourceState,
+            inputMomentumVectors: self.momentumVectors,
+            resultState: weightsAndBiasesState)
         
         return weightsAndBiasesState
     }

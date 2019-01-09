@@ -77,7 +77,7 @@ extension SketchCNN{
             inputFeatureChannels: inputFeatureChannels,
             outputFeatureChannels: outputFeatureChannels,
             optimizer: self.makeOptimizer())
-        
+
         if self.mode == .training{
             datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
                 device: self.device,
@@ -89,38 +89,42 @@ extension SketchCNN{
                 datasource.momentumVectors = [weightsMomentum, biasMomentum]
             }
         }
-        
+
         self.datasources.append(datasource)
-        
+
         let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
         conv.resultImage.format = .float32
         conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
         conv.label = "\(name)_conv"
-        
+
         let relu = MPSCNNNeuronReLUNode(source: conv.resultImage)
         relu.resultImage.format = .float32
         relu.label = "\(name)_relu"
         
-        if !includeMaxPooling{
-            return [conv, relu]
+        var layers = [conv, relu]
+        
+        if includeMaxPooling{
+            let pooling = MPSCNNPoolingMaxNode(
+                source: relu.resultImage,
+                filterSize: poolSize)
+            pooling.resultImage.format = .float32
+            pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
+            pooling.label = "\(name)_maxpooling"
+            
+            layers.append(pooling)
         }
         
-        let pooling = MPSCNNPoolingMaxNode(source: relu.resultImage, filterSize: poolSize)
-        pooling.resultImage.format = .float32
-        pooling.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
-        pooling.label = "\(name)_maxpooling"
-        
-        if self.mode == .inference || dropoutProbability == 0.0{
-            return [conv, relu, pooling]
+        if self.mode == .training && dropoutProbability > 0.0{
+            let dropout = MPSCNNDropoutNode(
+                source: layers.last!.resultImage,
+                keepProbability: (1.0 - dropoutProbability))
+            dropout.resultImage.format = .float32
+            dropout.label = "\(name)_dropout"
+            
+            layers.append(dropout)
         }
-        
-        let dropout = MPSCNNDropoutNode(
-            source: pooling.resultImage,
-            keepProbability: (1.0 - dropoutProbability))
-        dropout.resultImage.format = .float32
-        dropout.label = "\(name)_dropout"
-        
-        return [conv, relu, pooling, dropout]
+
+        return layers
     }
     
     func createDenseLayer(
@@ -163,43 +167,46 @@ extension SketchCNN{
         fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
         fc.label = "\(name)_fc"
         
-        if !includeActivation{
-            return [fc]
+        var layers = [MPSNNFilterNode](arrayLiteral: fc)
+        
+        if includeActivation{
+            let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
+            relu.resultImage.format = .float32
+            relu.label = "\(name)_relu"
+            
+            layers.append(relu)
         }
         
-        let relu = MPSCNNNeuronReLUNode(source: fc.resultImage)
-        relu.resultImage.format = .float32
-        relu.label = "\(name)_relu"
-        
-        if self.mode == .inference || dropoutProbability == 0.0{
-            return [fc, relu]
+        if self.mode == .training && dropoutProbability > 0.0{
+            let dropout = MPSCNNDropoutNode(
+                source: layers.last!.resultImage,
+                keepProbability: (1.0 - dropoutProbability))
+            dropout.resultImage.format = .float32
+            dropout.label = "\(name)_dropout"
+            
+            layers.append(dropout)
         }
         
-        let dropout = MPSCNNDropoutNode(
-            source: relu.resultImage,
-            keepProbability: (1.0 - dropoutProbability))
-        dropout.resultImage.format = .float32
-        dropout.label = "\(name)_dropout"
-        
-        return [fc, relu, dropout]
+        return layers
     }
     
     private func makeMPSVector(count:Int, repeating:Float=0.0) -> MPSVector?{
         // Create a Metal buffer
         guard let buffer = self.device.makeBuffer(
             bytes: Array<Float32>(repeating: repeating, count: count),
-            length: count * MemoryLayout<Float32>.size, options: [.storageModeShared]) else{
+            length: count * MemoryLayout<Float32>.size,
+            options: [.storageModeShared]) else{
                 return nil
         }
-        
+
         // Create a vector descriptor
         let desc = MPSVectorDescriptor(
             length: count, dataType: MPSDataType.float32)
-        
+
         // Create a vector with descriptor
         let vector = MPSVector(
             buffer: buffer, descriptor: desc)
-        
+
         return vector
     }
     
@@ -207,23 +214,23 @@ extension SketchCNN{
         guard self.mode == .training else{
             return nil
         }
-        
+
         let optimizerDescriptor = MPSNNOptimizerDescriptor(
             learningRate: self.learningRate,
             gradientRescale: 1.0,
             regularizationType: MPSNNRegularizationType.None,
             regularizationScale: 1.0)
-        
+
         let optimizer = MPSNNOptimizerStochasticGradientDescent(
             device: self.device,
             momentumScale: self.momentumScale,
             useNestrovMomentum: true,
             optimizerDescriptor: optimizerDescriptor)
-        
+
         optimizer.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
-        
+
         //print(optimizer.debugDescription)
-        
+
         return optimizer
     }
 }
@@ -276,9 +283,9 @@ extension SketchCNN{
         
         // placeholder node
         let input = MPSNNImageNode(handle: nil)
-        
+
         // INPUT = 128x128x1
-        
+
         // Scale
         let scale = MPSNNLanczosScaleNode(
             source: input,
@@ -352,9 +359,9 @@ extension SketchCNN{
             outputFeatureChannels: 64,
             includeActivation: true,
             dropoutProbability: 0.3)
-        
+
         // OUTPUT = 64
-        
+
         let layer6Nodes = createDenseLayer(
             name: "l6",
             x: layer5Nodes.last!.resultImage,
@@ -362,9 +369,9 @@ extension SketchCNN{
             inputFeatureChannels: 64,
             outputFeatureChannels: self.numberOfClasses,
             includeActivation: false)
-        
+
         // OUTPUT = numberOfClasses
-        
+
         let softmax = MPSCNNSoftMaxNode(source: layer6Nodes.last!.resultImage)
         softmax.resultImage.format = .float16
         softmax.label = "output"
@@ -392,7 +399,7 @@ extension SketchCNN{
         var validationAccuracy = [(epoch:Int, accuracy:Float)]()
         
         let trainingSemaphore = DispatchSemaphore(value:2)
-        
+
         var latestCommandBuffer : MTLCommandBuffer?
         
         // Check initial validation score
@@ -406,13 +413,13 @@ extension SketchCNN{
         for epoch in 1...epochs{
             autoreleasepool{
                 trainDataLoader.reset()
-                
+
                 while trainDataLoader.hasNext(){
                     latestCommandBuffer = self.trainStep(
                         withDataLoader: trainDataLoader,
                         semaphore: trainingSemaphore)
                 }
-                
+
                 // wait for training to complete
                 if latestCommandBuffer?.status != .completed{
                     latestCommandBuffer?.waitUntilCompleted()
@@ -424,7 +431,8 @@ extension SketchCNN{
                     updateDatasources()
                     
                     if let validDataLoader = validDataLoader{
-                        let accuracy = self.validate(withDataLoader: validDataLoader)
+                        let accuracy = self.validate(
+                            withDataLoader: validDataLoader)
                         print("Model Accuracy after \(epoch) epoch(s) is \(accuracy)")
                         
                         validationAccuracy.append((epoch: epoch, accuracy:accuracy))
@@ -453,7 +461,7 @@ extension SketchCNN{
             semaphore.signal()
             return nil
         }
-        
+
         // Get next batch
         guard let batch = dataLoader.nextBatch(commandBuffer:commandBuffer) else{
             semaphore.signal()
@@ -465,14 +473,14 @@ extension SketchCNN{
                           sourceStates: [batch.labels],
                           intermediateImages: nil,
                           destinationStates: nil)
-        
-        
+
+
         commandBuffer.addCompletedHandler({ (commandBuffer) in
             semaphore.signal()
         })
-        
+
         commandBuffer.commit()
-        
+
         return commandBuffer
     }
     

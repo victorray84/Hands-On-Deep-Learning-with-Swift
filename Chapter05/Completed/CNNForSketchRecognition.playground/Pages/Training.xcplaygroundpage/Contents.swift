@@ -66,8 +66,10 @@ guard let commandQueue = device.makeCommandQueue() else{
  */
 
 // Create our data loader
-let trainDataLoader = DataLoader(device: device, sourcePathURL: trainPath)
-let validDataLoader = DataLoader(device: device, sourcePathURL: validPath, batchSize: -1)
+let trainDataLoader = DataLoader(
+    device: device, sourcePathURL: trainPath)
+let validDataLoader = DataLoader(
+    device: device, sourcePathURL: validPath, batchSize: -1)
 
 // We pass in the target shape which will be used to scale the inputs accordingly
 let targetShape = Shape(
