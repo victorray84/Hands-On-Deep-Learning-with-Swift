@@ -40,45 +40,38 @@ guard let dataLoader = DataLoader(
         fatalError("Failed to create an instance of a DataLoader")
 }
 
-var count = 0
-while dataLoader.hasNext(){
-    if let batch = dataLoader.nextBatch(){
-        count += 1
-        print(count)
-        
-        if let rawBytes = batch[0].toFloatArray()?.map({ (val) -> UInt8 in
-            return UInt8((val * 127.5) + 127.5)
-        }){
-            if let cgImage = CGImage.fromByteArray(
-                bytes: rawBytes,
-                width: batch[0].width,
-                height: batch[0].height,
-                channels: batch[0].featureChannels){
-                
-                let image = NSImage(
-                    cgImage: cgImage,
-                    size: NSSize(width: cgImage.width, height: cgImage.height))
-                
-                print("hello world")
+//var count = 0
+//while dataLoader.hasNext(){
+//    if let batch = dataLoader.nextBatch(){
+//        count += 1
+//        print(count)
+//
+//        if let image = dataLoader.toNSImage(mpsImage: batch[0]){
+//            print("hello world")
+//        }
+//    }
+//}
+
+print("Creating GAN")
+
+let gan = GAN.createGAN(
+    withCommandQueue: commandQueue,
+    weightsPathURL: weightsPath,
+    exportImagesURL: exportsPath,
+    mode:.training)
+
+print("Training starting")
+
+gan.train(withDataLoader: dataLoader) {
+    print("Training Finished")
+
+    if let generatedImages = gan.generateSamples(10, syncronizeWithCPU: true){
+        for generatedImage in generatedImages{
+            if let nsImage = dataLoader.toNSImage(mpsImage: generatedImage){
+                print("NSImage created")
             }
         }
     }
 }
-
-//print("Creating GAN")
-//
-//let gan = GAN.createGAN(
-//    withCommandQueue: commandQueue,
-//    weightsPathURL: weightsPath,
-//    exportImagesURL: exportsPath,
-//    mode:.training)
-//
-//gan.train(withDataLoader: dataLoader) {
-//    print("Finished training")
-//
-//    if let samples = gan.generateSamples(10){
-//        print("sample created")
-//    }
-//}
 
 print("Finished")

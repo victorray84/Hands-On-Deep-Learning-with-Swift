@@ -51,20 +51,10 @@ public class GANSampleGenerator : NSObject{
                 imageData[i] = Float.randomNormal(mean: 0.0, std: 0.5)
             }
             
-            // update data
-            image.texture.replace(
-                region: MTLRegion(origin: MTLOrigin(x: 0,
-                                                    y: 0,
-                                                    z: 0),
-                                  size: MTLSize(width: self.latentSize,
-                                                height: 1,
-                                                depth: 1)),
-                mipmapLevel: 0,
-                slice: 0,
-                withBytes: imageData,
-                bytesPerRow: MemoryLayout<Float>.stride * self.latentSize,
-                bytesPerImage: 0)
-            
+            // get a unsafe pointer to our image data
+            let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
+            // Update data
+            image.writeBytes(dataPointer, dataLayout: .HeightxWidthxFeatureChannels, imageIndex: 0)            
             images.append(image)
             
         }
@@ -126,21 +116,15 @@ class PooledGANSampleGenerator : GANSampleGenerator{
             
             for i in 0..<imageData.count{
                 imageData[i] = Float.randomNormal(mean: 0.0, std: 0.5)
+                
+                // DEVELOPMENT
+                imageData[i] = 0.0 
             }
             
-            // update data
-            image.texture.replace(
-                region: MTLRegion(origin: MTLOrigin(x: 0,
-                                                    y: 0,
-                                                    z: 0),
-                                  size: MTLSize(width: self.latentSize,
-                                                height: 1,
-                                                depth: 1)),
-                mipmapLevel: 0,
-                slice: 0,
-                withBytes: imageData,
-                bytesPerRow: MemoryLayout<Float>.stride * self.latentSize,
-                bytesPerImage: 0)
+            // get a unsafe pointer to our image data
+            let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
+            // Update data
+            image.writeBytes(dataPointer, dataLayout: .HeightxWidthxFeatureChannels, imageIndex: 0)
             
             images.append(image)
             

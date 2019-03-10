@@ -5,15 +5,14 @@ import MetalPerformanceShaders
 public class DataLoader{
     
     /// Property of the MPSImageDescriptor to describe the channel format
-    public let channelFormat = MPSImageFeatureChannelFormat.float32
+    //public let channelFormat = MPSImageFeatureChannelFormat.float32
+    public let channelFormat = MPSImageFeatureChannelFormat.unorm8
     /// Property of the MPSImageDescriptor to describe the image width
     public let imageWidth  = 28
     /// Property of the MPSImageDescriptor to describe the image height
     public let imageHeight = 28
     /// Property of the MPSImageDescriptor to describe the number of channels (1 being grayscale)
     public let featureChannels = 1
-    /// Number of classes in our dataset
-    public var numberOfClasses : Int = 10
     
     /// Enable to have each batch first shuffled before retrieving
     public var shuffle : Bool = true
@@ -37,7 +36,8 @@ public class DataLoader{
     /// Size of our mini-batches
     public private(set) var batchSize : Int = 0
     
-    public var imagesData = [Float]()
+    //public var imagesData = [Float32]()
+    public var imagesData = [UInt8]()
     
     /*
      The size of our MPSImage pool that is used by the DataLoader (this to
@@ -45,7 +45,7 @@ public class DataLoader{
      */
     private var poolSize : Int{
         get{
-            return self.batchSize * 3
+            return self.batchSize * 4
         }
     }
     
@@ -77,7 +77,7 @@ public class DataLoader{
     
     public init?(device:MTLDevice,
                  imagesURL:URL,
-                 batchSize:Int=8){
+                 batchSize:Int=2){
         
         self.device = device
         self.batchSize = batchSize               
@@ -91,9 +91,10 @@ public class DataLoader{
         }
         
         // Normalise the data
-        self.imagesData = imageByteData.map({ (byte) -> Float in
-            return (Float(byte) - 127.5) / 127.5
-        })
+        self.imagesData = imageByteData
+//        self.imagesData = imageByteData.map({ (byte) -> Float in
+//            return (Float32(byte) - 127.5) / 127.5
+//        })
         
 //        let unnormalisedData = self.imagesData.map { (val) -> UInt8 in
 //            return UInt8((val * 127.5) + 127.5)
@@ -101,6 +102,36 @@ public class DataLoader{
         
         self.reset()
     }
+}
+
+// MARK: - Utility functions
+
+extension DataLoader{
+    
+    func toNSImage(mpsImage image:MPSImage) -> NSImage?{
+        guard let cgImage = self.toCGImage(mpsImage: image) else{
+            return nil
+        }
+        
+        return NSImage(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+    
+    func toCGImage(mpsImage image:MPSImage) -> CGImage?{
+        if let rawBytes = image.toFloatArray()?.map({ (val) -> UInt8 in
+            return UInt8((val * 127.5) + 127.5)
+        }){
+            return CGImage.fromByteArray(
+                bytes: rawBytes,
+                width: self.imageWidth,
+                height: self.imageHeight,
+                channels: self.featureChannels)
+        }
+        
+        return nil
+    }
+    
 }
 
 // MARK: - Sample methods
@@ -167,6 +198,14 @@ extension DataLoader{
             batchImages.append(image)
         }
         
+        for _ in 0..<self.batchSize{
+            guard let image = self.getBlankImage() else{
+                fatalError("Failed to create BLANK image")
+            }
+            
+            batchImages.append(image)
+        }
+        
         return batchImages
     }
 }
@@ -174,6 +213,30 @@ extension DataLoader{
 // MARK: - Image loading
 
 extension DataLoader{
+    
+    /** Updates a MPSImage from our pool and returns it */
+    public func getBlankImage() -> MPSImage?{
+        
+        // Get image data
+        //var imageData = [Float32]()
+        let imageData = [UInt8](repeating: 0, count: 28 * 28)
+        
+        // get a unsafe pointer to our image data
+        let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
+        
+        // update the data of the associated MPSImage object (with the image data)
+        self.mpsImagePool[self.mpsImagePoolIndex].writeBytes(
+            dataPointer,
+            dataLayout: MPSDataLayout.HeightxWidthxFeatureChannels,
+            imageIndex: 0)
+        
+        let image = self.mpsImagePool[mpsImagePoolIndex]
+        
+        // increase pointer to our pool
+        self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
+        
+        return image
+    }
     
     /** Updates a MPSImage from our pool and returns it */
     public func getInputForImage(atIndex index:Int) -> MPSImage?{
@@ -187,7 +250,8 @@ extension DataLoader{
         }
         
         // Get image data
-        var imageData = [Float]()
+        //var imageData = [Float32]()
+        var imageData = [UInt8]()
         imageData += self.imagesData[(sIdx..<eIdx)]
         
         // get a unsafe pointer to our image data
@@ -202,7 +266,6 @@ extension DataLoader{
         let image = self.mpsImagePool[mpsImagePoolIndex]
         
         // increase pointer to our pool
-        self.mpsImagePoolIndex += 1
         self.mpsImagePoolIndex = (self.mpsImagePoolIndex + 1) % self.poolSize
         
         return image
@@ -217,11 +280,13 @@ extension DataLoader{
         var labels = [MPSCNNLossLabels]()
         
         for _ in 0..<self.batchSize{
-            let labelData = Data(fromArray: [value])
+            var labelVec = [Float32](repeating: 0, count: 1)
+            labelVec[0] = value
+            let labelData = Data(fromArray: labelVec)
             
             guard let labelDesc = MPSCNNLossDataDescriptor(
                 data: labelData,
-                layout: MPSDataLayout.featureChannelsxHeightxWidth,
+                layout: MPSDataLayout.HeightxWidthxFeatureChannels,
                 size: MTLSize(width: 1, height: 1, depth: 1)) else{
                     return nil
             }

@@ -16,7 +16,9 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     
     var trainable : Bool = true
     
-    var optimizer : MPSNNOptimizerAdam?
+    //var optimizer : MPSNNOptimizerAdam?
+    var optimizer : MPSNNOptimizerStochasticGradientDescent?
+    
     var weightsAndBiasesState : MPSCNNConvolutionWeightsAndBiasesState?
     
     var weightsData : Data?
@@ -25,7 +27,6 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     let useBias : Bool
     
     var momentumVectors : [MPSVector]?
-    
     var velocityVectors : [MPSVector]?
     
     var weightsLength : Int{
@@ -47,7 +48,8 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
          weightsPathURL:URL,
          kernelSize:KernelSize, strideSize:KernelSize=(width:1, height:1),
          inputFeatureChannels:Int, outputFeatureChannels:Int,
-         optimizer:MPSNNOptimizerAdam? = nil,
+         //optimizer:MPSNNOptimizerAdam? = nil,
+         optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
          useBias:Bool = true){
         
         self.name = name
@@ -220,16 +222,25 @@ extension ConvnetDataSource{
         guard self.trainable else{
             gradientState.readCount -= 1
             sourceState.readCount -= 1
+
             // this should reflect the updated weights for this datasource (via a different network)
-            return weightsAndBiasesState
+//            return weightsAndBiasesState
+            return nil
         }
+        
+//        optimizer.encode(
+//            commandBuffer: commandBuffer,
+//            convolutionGradientState: gradientState,
+//            convolutionSourceState: sourceState,
+//            inputMomentumVectors: self.momentumVectors,
+//            inputVelocityVectors: self.velocityVectors,
+//            resultState: weightsAndBiasesState)
         
         optimizer.encode(
             commandBuffer: commandBuffer,
             convolutionGradientState: gradientState,
             convolutionSourceState: sourceState,
             inputMomentumVectors: self.momentumVectors,
-            inputVelocityVectors: self.velocityVectors,
             resultState: weightsAndBiasesState)
         
         return weightsAndBiasesState
@@ -240,8 +251,14 @@ extension ConvnetDataSource{
 
 extension ConvnetDataSource{
     
+    /*:
+     Syncronise the weights so we can access them on the CPU (and save to disk) - as per the documentation
+     
+     "To allow the CPU to access what the device has written, a MTLCommandBuffer object
+     containing this synchronization must be executed. After completion of the command
+     buffer execution, the CPU can access the contents of the resource safely."
+    */
     func synchronizeParameters(on commandBuffer:MTLCommandBuffer){
-        // Syncronise the weights so we can access them on the CPU (and save to disk)
         self.weightsAndBiasesState?.synchronize(on: commandBuffer)
     }
     
