@@ -29,6 +29,7 @@ public class GANSampleGenerator : NSObject{
     
     let device : MTLDevice
     let latentSize : Int
+    let randomSource : GKRandomSource
     
     lazy var imageData : [Float] = {
         return [Float](repeating: 0.0, count: self.latentSize) // resuze array for each image
@@ -37,6 +38,7 @@ public class GANSampleGenerator : NSObject{
     public init(_ device:MTLDevice, _ latentSize:Int) {
         self.device = device
         self.latentSize = latentSize
+        self.randomSource = GKRandomSource.sharedRandom()
     }
     
     public func generate(_ batchSize:Int, _ imageData:[Float]?=nil) -> [MPSImage]?{
@@ -48,13 +50,16 @@ public class GANSampleGenerator : NSObject{
             let image = MPSImage(device: self.device, imageDescriptor: self.imageDescriptor)
             
             for i in 0..<imageData.count{
-                imageData[i] = Float.randomNormal(mean: 0.0, std: 0.5)
+                imageData[i] = Float.randomNormal(
+                    mean:  0.0001,
+                    deviation: 0.5,
+                    randomSource: self.randomSource)
             }
             
             // get a unsafe pointer to our image data
             let dataPointer = UnsafeMutableRawPointer(mutating: imageData)
             // Update data
-            image.writeBytes(dataPointer, dataLayout: .HeightxWidthxFeatureChannels, imageIndex: 0)            
+            image.writeBytes(dataPointer, dataLayout: .HeightxWidthxFeatureChannels, imageIndex: 0)
             images.append(image)
             
         }
@@ -107,7 +112,8 @@ class PooledGANSampleGenerator : GANSampleGenerator{
         
         var images = [MPSImage]()
         
-        var imageData = imageData ?? self.imageData
+        //var imageData = imageData ?? self.imageData
+        var imageData = imageData ?? [Float](repeating: 0.0, count: self.latentSize)
         
         for _ in 0..<batchSize{
             let image = self.pool[self.index]
@@ -115,10 +121,10 @@ class PooledGANSampleGenerator : GANSampleGenerator{
             self.index %= self.poolSize
             
             for i in 0..<imageData.count{
-                imageData[i] = Float.randomNormal(mean: 0.0, std: 0.5)
-                
-                // DEVELOPMENT
-                imageData[i] = 0.0 
+                imageData[i] = Float.randomNormal(
+                    mean: 0.0001,
+                    deviation: 0.5,
+                    randomSource: self.randomSource)
             }
             
             // get a unsafe pointer to our image data

@@ -52,6 +52,8 @@ guard let dataLoader = DataLoader(
 //    }
 //}
 
+////// START: TRAINING //////
+
 print("Creating GAN")
 
 let gan = GAN.createGAN(
@@ -63,15 +65,31 @@ let gan = GAN.createGAN(
 print("Training starting")
 
 gan.train(withDataLoader: dataLoader) {
-    print("Training Finished")
-
-    if let generatedImages = gan.generateSamples(10, syncronizeWithCPU: true){
-        for generatedImage in generatedImages{
-            if let nsImage = dataLoader.toNSImage(mpsImage: generatedImage){
-                print("NSImage created")
-            }
-        }
-    }
+    print("Training Finished (callback)")
 }
 
-print("Finished")
+print("Finished training")
+
+////// END: TRAINING //////
+
+////// START: INFERENCE //////
+
+ // inference // //
+let ganForInference = GAN.createGAN(
+    withCommandQueue: commandQueue,
+    weightsPathURL: weightsPath,
+    exportImagesURL: exportsPath,
+    mode:.inference)
+
+//if let generatedImages = gan.generateSamples(10, syncronizeWithCPU: true){
+//    for generatedImage in generatedImages{
+//        if let nsImage = dataLoader.toNSImage(mpsImage: generatedImage){
+//            print("NSImage created")
+//        }
+//    }
+//}
+autoreleasepool { () -> Void in
+    ganForInference.testDiscriminator(dataLoader: dataLoader)
+}
+
+////// END: INFERENCE //////

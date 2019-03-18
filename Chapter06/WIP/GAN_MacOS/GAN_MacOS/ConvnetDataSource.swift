@@ -7,6 +7,8 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     
     public static let FolderName = "gan_weights"
     
+    var cnnConvolution : MPSCNNConvolution? = nil
+    
     let name : String
     let kernelSize : KernelSize
     let strideSize : KernelSize
@@ -16,8 +18,8 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     
     var trainable : Bool = true
     
-    //var optimizer : MPSNNOptimizerAdam?
-    var optimizer : MPSNNOptimizerStochasticGradientDescent?
+    var optimizer : MPSNNOptimizerAdam?
+//    var optimizer : MPSNNOptimizerStochasticGradientDescent?
     
     var weightsAndBiasesState : MPSCNNConvolutionWeightsAndBiasesState?
     
@@ -46,10 +48,11 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     
     init(name:String,
          weightsPathURL:URL,
-         kernelSize:KernelSize, strideSize:KernelSize=(width:1, height:1),
+         kernelSize:KernelSize,
+         strideSize:KernelSize=(width:1, height:1),
          inputFeatureChannels:Int, outputFeatureChannels:Int,
-         //optimizer:MPSNNOptimizerAdam? = nil,
-         optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
+         optimizer:MPSNNOptimizerAdam? = nil,
+         //optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
          useBias:Bool = true){
         
         self.name = name
@@ -168,7 +171,7 @@ extension ConvnetDataSource{
          with stddev = sqrt(2 / fan_in) where fan_in is the number of input units in the weight tensor.
          Reference: https://keras.io/initializers/
         */
-        //let std : Float = Float(sqrt(2.0 / Double(self.inputFeatureChannels)))
+//        let std : Float = Float(sqrt(2.0 / Double(self.inputFeatureChannels)))
         
         /*
          Glorot uniform initializer, also called Xavier uniform initializer: Draws samples from a uniform distribution
@@ -176,15 +179,26 @@ extension ConvnetDataSource{
          sqrt(6 / (fan_in + fan_out)) where fan_in is the number of input units in
          the weight tensor and fan_out is the number of output units in the weight tensor.
          Reference: https://keras.io/initializers/
+         
+         === Turi create ===
+         std::sqrt(3.f / (0.5f * fan_in + 0.5f * fan_out));
+         Reference: https://github.com/apple/turicreate/blob/master/src/unity/toolkits/neural_net/weight_init.cpp
         */
-        let limit = sqrt(6.0 / (Double(self.inputFeatureChannels + self.outputFeatureChannels)))
+        //let limit = sqrt(6.0 / (Double(self.inputFeatureChannels + self.outputFeatureChannels)))
+        
+        let numerator : Double = 3.0
+        let denominator : Double = 0.5 * Double(self.inputFeatureChannels) + 0.5 * Double(self.outputFeatureChannels)
+        
+        let magnitude = Float32(sqrt(numerator / denominator))
         
         for index in 0..<count{
             // He normal initializer
-            //randomWeights[index] = Float.truncatedRandomNormal(mean: 0.0, std: std)
+//            randomWeights[index] = Float.truncatedRandomNormal(mean: 0.0, std: std)
             
             // Glorot uniform initializer (default in Keras)
-            randomWeights[index] = Float(Double.random(in: -limit...limit))
+            //randomWeights[index] = Float(Double.random(in: -limit...limit))
+            
+            randomWeights[index] = Float32.random(in:-magnitude...magnitude)
         }
         
         return Data(fromArray:randomWeights)
@@ -203,9 +217,11 @@ extension ConvnetDataSource{
 extension ConvnetDataSource{
     
     // Update called when training on the CPU
-    func update(with gradientState: MPSCNNConvolutionGradientState,
+    public func update(with gradientState: MPSCNNConvolutionGradientState,
                 sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
-        return false
+        let g = gradientState.gradientForWeights.toArray(type: Float.self)
+        
+        return true
     }
     
     // Update called when training on the GPU
@@ -219,28 +235,30 @@ extension ConvnetDataSource{
             return nil
         }
         
+        if self.name == "d_dense_1" {
+            if self.cnnConvolution == nil{
+                self.cnnConvolution = gradientState.convolution
+                print(gradientState.convolution)
+            } else if self.cnnConvolution != gradientState.convolution{
+                print(gradientState.convolution)
+            }
+        }
+        
         guard self.trainable else{
             gradientState.readCount -= 1
             sourceState.readCount -= 1
 
             // this should reflect the updated weights for this datasource (via a different network)
-//            return weightsAndBiasesState
+            //return weightsAndBiasesState
             return nil
         }
-        
-//        optimizer.encode(
-//            commandBuffer: commandBuffer,
-//            convolutionGradientState: gradientState,
-//            convolutionSourceState: sourceState,
-//            inputMomentumVectors: self.momentumVectors,
-//            inputVelocityVectors: self.velocityVectors,
-//            resultState: weightsAndBiasesState)
         
         optimizer.encode(
             commandBuffer: commandBuffer,
             convolutionGradientState: gradientState,
             convolutionSourceState: sourceState,
             inputMomentumVectors: self.momentumVectors,
+            inputVelocityVectors: self.velocityVectors,
             resultState: weightsAndBiasesState)
         
         return weightsAndBiasesState

@@ -39,7 +39,7 @@ public class GAN{
     
     public private(set) var learningRate : Float = 0.0002
     
-    public private(set) var momentumScale : Float = 0.2 // beta1
+    public private(set) var momentumScale : Float = 0.5 // beta1
     
     public private(set) var latentSize: Int = 100
     
@@ -75,7 +75,7 @@ public class GAN{
                 inputShape:Shape=(width:28, height:28, channels:1),
                 latentSize: Int = 100,
                 mode:NetworkMode = NetworkMode.training,
-                learningRate:Float=0.0002,
+                learningRate:Float=0.0, //0.0002,
                 momentumScale:Float=0.5){
         
         self.commandQueue = commandQueue
@@ -155,7 +155,7 @@ extension GAN{
     
     public func train(
         withDataLoader dataLoader:DataLoader,
-        epochs:Int = 100,
+        epochs:Int = 3,
         completionHandler handler: @escaping () -> Void){
         
         for epoch in 1...epochs{
@@ -172,6 +172,10 @@ extension GAN{
                         trainingSteps += 1
                         discriminatorLoss += loss.discriminatorLoss
                         adversarialLoss += loss.adversarialLoss
+                        
+                        if Int(trainingSteps) % 5 == 0{
+                            print("... discriminatorLoss \(discriminatorLoss/trainingSteps), adversarialLoss \(adversarialLoss/trainingSteps)")
+                        }
                     }
                 }
             }
@@ -181,9 +185,9 @@ extension GAN{
             adversarialLoss /= trainingSteps
             
             // DEV
-            inspectDatasources(d:self.discriminatorGraph!.datasources,
-                               g:self.generatorGraph!.datasources,
-                               a:self.adversarialGraph!.datasources)
+//            inspectDatasources(d:self.discriminatorGraph!.datasources,
+//                               g:self.generatorGraph!.datasources,
+//                               a:self.adversarialGraph!.datasources)
             
             // Generate sample images every n epochs
             print("Finished epoch \(epoch); discriminator loss \(discriminatorLoss), adversarial loss \(adversarialLoss)")
@@ -203,9 +207,19 @@ extension GAN{
                     ds.trainable = false
                 }
                 
-                //updateDatasources(self.adversarialGraph!.datasources)
+                updateDatasources(self.adversarialGraph!.datasources)
                 
-                //self.generateImages(dataLoader.batchSize, forEpoch:epoch, withDataLoader: dataLoader)
+                // Reload weights
+                self.discriminatorGraph?.graph.reloadFromDataSources()
+                self.generatorGraph?.graph.reloadFromDataSources()
+                self.adversarialGraph?.graph.reloadFromDataSources()
+                
+                self.generateImages(dataLoader.batchSize, forEpoch:epoch, withDataLoader: dataLoader)
+                
+                // DEVELOPMENT
+                autoreleasepool { () -> Void in
+                    testDiscriminator(dataLoader:dataLoader)
+                }
             }
         }
         
@@ -229,9 +243,9 @@ extension GAN{
         
         // 1. get the inputs (x and y)
         if let trueImages = dataLoader.nextBatch(),
-            let trueLabels = dataLoader.createLabels(withValue: 0.8),
-            let falseImages = self.generateSamples(dataLoader.batchSize),
-            let falseLabels = dataLoader.createLabels(withValue: 0.2),
+            let trueLabels = dataLoader.createLabels(withValue: 0.9),
+            let falseImages = self.generateSamples(dataLoader.batchSize, syncronizeWithCPU: true),
+            let falseLabels = dataLoader.createLabels(withValue: 0.0),
             let commandBuffer = self.commandQueue.makeCommandBuffer() {
             
             // Train the discriminator
@@ -239,38 +253,17 @@ extension GAN{
                 ds.trainable = true
             }
             
-//            discriminator.graph.encodeBatch(
-//                to: commandBuffer,
-//                sourceImages: [trueImages + falseImages],
-//                sourceStates: [trueLabels + falseLabels],
-//                intermediateImages: nil,
-//                destinationStates: nil)
-            
             discriminator.graph.encodeBatch(
                 to: commandBuffer,
-                sourceImages: [trueImages],
+                sourceImages: [trueImages + falseImages],
                 sourceStates: [trueLabels + falseLabels],
                 intermediateImages: nil,
                 destinationStates: nil)
             
-//            discriminator.graph.encodeBatch(
-//                to: commandBuffer,
-//                sourceImages: [trueImages],
-//                sourceStates: [trueLabels],
-//                intermediateImages: nil,
-//                destinationStates: nil)
-//
-//            discriminator.graph.encodeBatch(
-//                to: commandBuffer,
-//                sourceImages: [falseImages],
-//                sourceStates: [falseLabels],
-//                intermediateImages: nil,
-//                destinationStates: nil)
-            
             // Syncronise the parameters so they are available for the adversarial network
             // TODO: Check this is needed
             for ds in discriminator.datasources{
-                //ds.synchronizeParameters(on: commandBuffer)
+                ds.synchronizeParameters(on: commandBuffer)
             }
             
             // Syncronise the loss labels so we can get access to them
@@ -293,49 +286,52 @@ extension GAN{
         }
         
         // Train the generative adversarial network (aka adversarial)
-        
-//        if let commandBuffer = self.commandQueue.makeCommandBuffer(){
-//
-//            // Disable 'learning' for the discriminator nodes
-//            adversarial.datasources.filter { $0.name.starts(with: "d_") }.forEach { (ds) in
-//                ds.trainable = false
-//            }
-//
-//            if let x = self.sampleGenerator.generate(dataLoader.batchSize),
-//                let y = dataLoader.createLabels(withValue: 1.0){
-//
-//                adversarial.graph.encodeBatch(
-//                    to: commandBuffer,
-//                    sourceImages: [x],
-//                    sourceStates: [y],
-//                    intermediateImages: nil,
-//                    destinationStates: nil)
-//
-//                // Syncronoise the weights so they are available to the generator network
-//                // TODO: Check this is needed
-//                for ds in adversarial.datasources.filter( { $0.trainable } ){
-//                    ds.synchronizeParameters(on: commandBuffer)
+        for _ in 0..<2{
+            if let commandBuffer = self.commandQueue.makeCommandBuffer(){
+                // Disable 'learning' for the discriminator nodes
+                discriminator.datasources.forEach { (ds) in
+                    ds.trainable = false
+                }
+//                adversarial.datasources.filter { $0.name.starts(with: "d_") }.forEach { (ds) in
+//                    ds.trainable = false
 //                }
-//
-//                // Syncronise the loss labels so we can get access to them
-//                // to return to the caller
-//                for label in y{
-//                    label.synchronize(on: commandBuffer)
-//                }
-//
-//                commandBuffer.commit()
-//                commandBuffer.waitUntilCompleted()
-//
-//                // Calculate and store the loss
-//                for label in y{
-//                    if let loss = label.lossImage().toFloatArray(){
-//                        adversarialLoss += loss[0]
-//                    }
-//                }
-//
-//                adversarialLoss /= Float(y.count)
-//            }
-//        }
+                
+                if let x = self.sampleGenerator.generate(dataLoader.batchSize),
+                    let y = dataLoader.createLabels(withValue: 1.0){
+                    
+                    adversarial.graph.encodeBatch(
+                        to: commandBuffer,
+                        sourceImages: [x],
+                        sourceStates: [y],
+                        intermediateImages: nil,
+                        destinationStates: nil)
+                    
+                    // Syncronoise the weights so they are available to the generator network
+                    // TODO: Check this is needed
+                    for ds in adversarial.datasources.filter( { $0.trainable } ){
+                        ds.synchronizeParameters(on: commandBuffer)
+                    }
+                    
+                    // Syncronise the loss labels so we can get access to them
+                    // to return to the caller
+                    for label in y{
+                        label.synchronize(on: commandBuffer)
+                    }
+                    
+                    commandBuffer.commit()
+                    commandBuffer.waitUntilCompleted()
+                    
+                    // Calculate and store the loss
+                    for label in y{
+                        if let loss = label.lossImage().toFloatArray(){
+                            adversarialLoss += loss[0]
+                        }
+                    }
+                    
+                    adversarialLoss /= Float(y.count)
+                }
+            }
+        }
         
         return (discriminatorLoss:discriminatorLoss, adversarialLoss:adversarialLoss)
     }
@@ -387,6 +383,109 @@ extension GAN{
 
 extension GAN{
     
+    @discardableResult
+    func testDiscriminator(dataLoader:DataLoader) -> (Float, Float, Float) {
+        guard let discriminator = createDiscriminator(.inference) else{
+            return (-1, -1, -1)
+        }
+        
+        var count : Float = 0
+        var trueCorrectCount : Float = 0
+        var falseCorrectCount : Float = 0
+        
+        dataLoader.reset()
+        
+        if let trueImages = dataLoader.nextBatch(),
+            let falseImages = self.generateSamples(dataLoader.batchSize, syncronizeWithCPU: true){
+            //let falseImages = dataLoader.createDummyInput(withValue: 0.0, count: dataLoader.batchSize){
+            
+            for image in trueImages{
+                let array = image.toFloatArray()
+                let tex = image.texture
+                
+                if let nsImage = dataLoader.toNSImage(mpsImage: image){
+                    let _ = nsImage
+                }
+            }
+            
+            for image in falseImages{
+                let array = image.toFloatArray()
+                let tex = image.texture
+
+                if let nsImage = dataLoader.toNSImage(mpsImage: image){
+                    let _ = nsImage
+                }
+            }
+            
+            if let commandBuffer = self.commandQueue.makeCommandBuffer(){
+                let outputs = discriminator.graph.encodeBatch(
+                    to: commandBuffer,
+                    sourceImages: [trueImages],
+                    sourceStates: nil)
+                
+                outputs?.forEach({ (output) in
+                    output.synchronize(on: commandBuffer)
+                })
+                commandBuffer.commit()
+                commandBuffer.waitUntilCompleted()
+                
+                // Process outputs
+                if let outputs = outputs{
+//                    let array = outputs[0].toFloatArray()
+                    
+                    let predictions = outputs.map({ (output) -> Float in
+                        if let probs = output.toFloatArray(){
+                            return probs[0]
+                        }
+                        return -1.0
+                    })
+                    
+                    count += Float(predictions.count)
+                    trueCorrectCount = predictions.reduce(0, { (res, prob) -> Float in
+                        return res + (prob > 0.5 ? 1 : 0)
+                    })
+                }
+            }
+            
+            if let commandBuffer = self.commandQueue.makeCommandBuffer(){
+                let outputs = discriminator.graph.encodeBatch(
+                    to: commandBuffer,
+                    sourceImages: [falseImages],
+                    sourceStates: nil)
+                
+                outputs?.forEach({ (output) in
+                    output.synchronize(on: commandBuffer)
+                })
+                commandBuffer.commit()
+                commandBuffer.waitUntilCompleted()
+                
+                // Process outputs
+                if let outputs = outputs{
+                    let predictions = outputs.map({ (output) -> Float in
+                        if let probs = output.toFloatArray(){
+                            return probs[0]
+                        }
+                        return -1.0
+                    })
+                    
+                    count += Float(predictions.count)
+                    falseCorrectCount = predictions.reduce(0, { (res, prob) -> Float in
+                        return res + (prob < 0.5 ? 1 : 0)
+                    })
+                }
+            }
+        }
+        
+        let accuracy = (trueCorrectCount + falseCorrectCount)/count
+        let trueAccuracy = trueCorrectCount/(count/2)
+        let falseAccuracy = falseCorrectCount/(count/2)
+        
+        print("total accuracy \(accuracy), true accuracy \(trueAccuracy), false accuracy \(falseAccuracy)")
+        
+        return (accuracy, trueAccuracy, falseAccuracy)
+        
+    }
+    
     func inspectDatasources(d:[DataSource], g:[DataSource], a:[DataSource]){
         guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
             return
@@ -421,15 +520,26 @@ extension GAN{
             return ds.name == "d_dense_1"
         }
         
+        let tmp0 = d.first { (ds) -> Bool in
+            return ds.name == "d_conv_2"
+        }
+        
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
-        if tmp1 != nil{
-            let weightsDataA = tmp1!.weightsAndBiasesState!.weights.toArray(type: Float.self)
-            
-            print("tmp1")
-            print(weightsDataA[0...20])
-        }
+//        if tmp0 != nil{
+//            let weightsDataA = tmp0!.weightsAndBiasesState!.weights.toArray(type: Float.self)
+//            
+//            print("tmp0")
+//            print(weightsDataA[20...30])
+//        }
+//        
+//        if tmp1 != nil{
+//            let weightsDataA = tmp1!.weightsAndBiasesState!.weights.toArray(type: Float.self)
+//            
+//            print("tmp1")
+//            print(weightsDataA[100...110])
+//        }
         
 //        if tmp1 != nil && tmp2 != nil{
 //            let weightsDataA = tmp1!.weightsAndBiasesState!.weights.toArray(type: Float.self)
@@ -442,16 +552,16 @@ extension GAN{
 //            print(weightsDataB[0...20])
 //        }
 //
-//        if tmp3 != nil && tmp4 != nil{
-//            let weightsDataA = tmp3!.weightsAndBiasesState!.weights.toArray(type: Float.self)
-//            let weightsDataB = tmp4!.weightsAndBiasesState!.weights.toArray(type: Float.self)
-//
-//            print("tmp3")
-//            print(weightsDataA[0...20])
-//
-//            print("tmp4")
-//            print(weightsDataB[0...20])
-//        }
+        if tmp3 != nil && tmp4 != nil{
+            let weightsDataA = tmp3!.weightsAndBiasesState!.weights.toArray(type: Float.self)
+            let weightsDataB = tmp4!.weightsAndBiasesState!.weights.toArray(type: Float.self)
+
+            print("tmp3")
+            print(weightsDataA[20...40])
+
+            print("tmp4")
+            print(weightsDataB[20...40])
+        }
         
         print("Hello world!")
         
@@ -470,6 +580,9 @@ extension GAN{
         return activation
     }
     
+    /*:
+     f(x) = alpha * x for x < 0, f(x) = x for x >= 0
+    */
     static func createLeakyRelu(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
         let activation = MPSCNNNeuronReLUNode(source: x, a:0.2)
         activation.resultImage.format = .float32
@@ -478,8 +591,8 @@ extension GAN{
     }
     
     static func createSigmoid(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        //let activation = MPSCNNNeuronSigmoidNode(source:x)
-        let activation = MPSCNNNeuronHardSigmoidNode(source: x)
+        let activation = MPSCNNNeuronSigmoidNode(source:x)
+        //let activation = MPSCNNNeuronHardSigmoidNode(source: x, a:1.0, b:Float.leastNonzeroMagnitude)
         activation.resultImage.format = .float32
         activation.label = name
         return activation
@@ -499,7 +612,7 @@ extension GAN{
 extension GAN{
     
     //private func makeOptimizer() -> MPSNNOptimizerAdam?{
-    private func makeOptimizer() -> MPSNNOptimizerStochasticGradientDescent?{
+    private func makeOptimizer() -> MPSNNOptimizerAdam?{
         guard self.mode == .training else{
             return nil
         }
@@ -510,19 +623,21 @@ extension GAN{
             regularizationType: .None,
             regularizationScale: 0.0)
         
-//        let optimizer = MPSNNOptimizerAdam(
-//            device: self.device,
-//            beta1: Double(self.momentumScale),
-//            beta2: 0.999,
-//            epsilon: 1e-8,
-//            timeStep: 0,
-//            optimizerDescriptor: optimizerDescriptor)
-        
-        let optimizer = MPSNNOptimizerStochasticGradientDescent(
+        let optimizer = MPSNNOptimizerAdam(
             device: self.device,
-            momentumScale: self.momentumScale,
-            useNestrovMomentum: true,
+            beta1: Double(self.momentumScale),
+            beta2: 0.999,
+            epsilon: 1e-8,
+            timeStep: 0,
             optimizerDescriptor: optimizerDescriptor)
+        
+        optimizer.options = MPSKernelOptions(arrayLiteral: MPSKernelOptions.verbose)
+        
+//        let optimizer = MPSNNOptimizerStochasticGradientDescent(
+//            device: self.device,
+//            momentumScale: self.momentumScale,
+//            useNestrovMomentum: true,
+//            optimizerDescriptor: optimizerDescriptor)
         
         return optimizer
     }
@@ -562,7 +677,6 @@ extension GAN{
         
         // We are sharing datasources between our networks (specifically the Discriminator + GAN,
         // Generator + GAN - it's for this reason we cache them
-        self.sharedDatasources.removeValue(forKey: name)
         if self.sharedDatasources[name] == nil{
             let datasource = ConvnetDataSource(
                 name: name,
@@ -636,7 +750,6 @@ extension GAN{
         
         // We are sharing datasources between our networks (specifically the Discriminator + GAN,
         // Generator + GAN - it's for this reason we cache them
-        self.sharedDatasources.removeValue(forKey: name)
         if self.sharedDatasources[name] == nil{
             let datasource = ConvnetDataSource(
                 name: name,
@@ -699,7 +812,6 @@ extension GAN{
         
         // We are sharing datasources between our networks (specifically the Discriminator + GAN,
         // Generator + GAN - it's for this reason we cache them
-        self.sharedDatasources.removeValue(forKey: name)
         if self.sharedDatasources[name] == nil{
             let datasource = ConvnetDataSource(
                 name: name,
@@ -779,9 +891,9 @@ extension GAN{
             inputFeatureChannels: inputShape.channels,
             outputFeatureChannels: 64,
             datasources: &datasources,
-            activationFunc: GAN.createLeakyRelu)
+            activationFunc: GAN.createRelu)
         
-        lastOutput = layer1.last!.resultImage
+        lastOutput = layer1.last!.resultImage // 14x14x64
         nodes += layer1
         
         let layer2 = self.createConvLayer(
@@ -792,9 +904,9 @@ extension GAN{
             inputFeatureChannels: 64,
             outputFeatureChannels: 128,
             datasources: &datasources,
-            activationFunc: GAN.createLeakyRelu)
+            activationFunc: GAN.createRelu)
         
-        lastOutput = layer2.last!.resultImage
+        lastOutput = layer2.last!.resultImage // 7x7x128
         nodes += layer2
         
         let layer3 = self.createDenseLayer(
@@ -804,9 +916,9 @@ extension GAN{
             inputFeatureChannels: 128,
             outputFeatureChannels: 256,
             datasources: &datasources,
-            activationFunc: GAN.createLeakyRelu)
+            activationFunc: GAN.createRelu)
         
-        lastOutput = layer3.last!.resultImage
+        lastOutput = layer3.last!.resultImage // 1x1x256
         nodes += layer3
         
         let layer4 = self.createDenseLayer(
@@ -828,8 +940,18 @@ extension GAN{
         // Create placeholder for our input into the network
         let input = MPSNNImageNode(handle: nil)
         
+        // Scale
+        let scale = MPSNNLanczosScaleNode(
+            source: input,
+            outputSize: MTLSize(
+                width: self.inputShape.width,
+                height: self.inputShape.height,
+                depth: 1))
+        
         // Create the forward pass
-        let (nodes, datasources) = createDiscriminatorForwardPassNodes(input, self.inputShape)
+        let (nodes, datasources) = createDiscriminatorForwardPassNodes(
+            scale.resultImage,
+            self.inputShape)
         
         // Obtain reference to the last node 
         var lastOutput = nodes.last!.resultImage
@@ -847,8 +969,7 @@ extension GAN{
         
         // === Loss function ===
         let lossDesc = MPSCNNLossDescriptor(
-//            type: MPSCNNLossType.sigmoidCrossEntropy,
-            type: MPSCNNLossType.categoricalCrossEntropy,
+            type: MPSCNNLossType.sigmoidCrossEntropy,
             reductionType: MPSCNNReductionType.mean)
         
         let loss = MPSCNNLossNode(
@@ -858,12 +979,19 @@ extension GAN{
         loss.resultImage.format = .float32
         lastOutput = loss.resultImage
         
+        //let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
+        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
+        
         // === Backwards pass ===
         let _ = nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
             let gradientNode = node.gradientFilter(withSource: lastOutput)
             
             lastOutput = gradientNode.resultImage
             lastOutput.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
+            }
             
             return gradientNode
         }
@@ -874,7 +1002,7 @@ extension GAN{
             resultImageIsNeeded: false) else{
                 return nil
         }
-        
+        mpsGraph.outputStateIsTemporary = true
         mpsGraph.format = .float32
         
         return Graph(mpsGraph, datasources, mode)
@@ -908,7 +1036,7 @@ extension GAN{
             inputFeatureChannels: 1,
             outputFeatureChannels: 7 * 7 * 128,
             datasources: &datasources,
-            activationFunc: GAN.createLeakyRelu)
+            activationFunc: GAN.createRelu)
         
         lastOutput = layer1.last!.resultImage
         nodes += layer1
@@ -933,7 +1061,7 @@ extension GAN{
             outputFeatureChannels: 64,
             datasources: &datasources,
             upscale: 2,
-            activationFunc:GAN.createLeakyRelu)
+            activationFunc:GAN.createRelu)
         
         lastOutput = layer2.last!.resultImage
         nodes += layer2
