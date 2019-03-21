@@ -52,7 +52,7 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
          strideSize:KernelSize=(width:1, height:1),
          inputFeatureChannels:Int, outputFeatureChannels:Int,
          optimizer:MPSNNOptimizerAdam? = nil,
-         //optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
+//         optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
          useBias:Bool = true){
         
         self.name = name
@@ -198,7 +198,7 @@ extension ConvnetDataSource{
             // Glorot uniform initializer (default in Keras)
             //randomWeights[index] = Float(Double.random(in: -limit...limit))
             
-            randomWeights[index] = Float32.random(in:-magnitude...magnitude)
+            randomWeights[index] = Float32.random(in:-magnitude...magnitude) * 0.5
         }
         
         return Data(fromArray:randomWeights)
@@ -207,7 +207,7 @@ extension ConvnetDataSource{
     private func generateBiasTerms() -> Data?{
         let weightsCount = self.outputFeatureChannels
         
-        let biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
+        let biasTerms = Array<Float>(repeating: 0.00001, count: weightsCount)
         return Data(fromArray:biasTerms)
     }
 }
@@ -219,7 +219,7 @@ extension ConvnetDataSource{
     // Update called when training on the CPU
     public func update(with gradientState: MPSCNNConvolutionGradientState,
                 sourceState: MPSCNNConvolutionWeightsAndBiasesState) -> Bool {
-        let g = gradientState.gradientForWeights.toArray(type: Float.self)
+//        let g = gradientState.gradientForWeights.toArray(type: Float.self)
         
         return true
     }
@@ -235,13 +235,9 @@ extension ConvnetDataSource{
             return nil
         }
         
-        if self.name == "d_dense_1" {
-            if self.cnnConvolution == nil{
-                self.cnnConvolution = gradientState.convolution
-                print(gradientState.convolution)
-            } else if self.cnnConvolution != gradientState.convolution{
-                print(gradientState.convolution)
-            }
+        // Obtain reference to the associated MPSCNNConvolution
+        if self.cnnConvolution == nil{
+            self.cnnConvolution = gradientState.convolution
         }
         
         guard self.trainable else{
@@ -249,9 +245,16 @@ extension ConvnetDataSource{
             sourceState.readCount -= 1
 
             // this should reflect the updated weights for this datasource (via a different network)
-            //return weightsAndBiasesState
-            return nil
+            return weightsAndBiasesState
+//            return nil
         }
+        
+//        optimizer.encode(
+//            commandBuffer: commandBuffer,
+//            convolutionGradientState: gradientState,
+//            convolutionSourceState: sourceState,
+//            inputMomentumVectors: self.momentumVectors,
+//            resultState: weightsAndBiasesState)
         
         optimizer.encode(
             commandBuffer: commandBuffer,

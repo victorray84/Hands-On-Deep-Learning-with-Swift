@@ -75,7 +75,7 @@ public class DataLoader{
     
     public init?(device:MTLDevice,
                  imagesURL:URL,
-                 batchSize:Int=8){
+                 batchSize:Int=32){
         
         self.device = device
         self.batchSize = batchSize               
@@ -266,17 +266,20 @@ extension DataLoader{
 
 extension DataLoader{
     
-    func createLabels(withValue value:Float, variance:Float=0.1) -> [MPSCNNLossLabels]?{
+    func createLabels(withValue value:Float, variance:Float=0.01, batchSize:Int?=nil) -> [MPSCNNLossLabels]?{
         var labels = [MPSCNNLossLabels]()
         
-        for _ in 0..<self.batchSize{
-            var labelVec = [Float32](repeating: 0, count: 1)
+        let batchSize = batchSize ?? self.batchSize
+        
+        for _ in 0..<batchSize{
+            var labelVec = [Float](repeating: 0, count: 1)
             labelVec[0] = max(min(1.0, value + Float.random(in: -variance...variance)), 0.0) // Add some variance to the labels
             let labelData = Data(fromArray: labelVec)
             
             guard let labelDesc = MPSCNNLossDataDescriptor(
                 data: labelData,
-                layout: MPSDataLayout.HeightxWidthxFeatureChannels,
+                layout: MPSDataLayout.featureChannelsxHeightxWidth,
+//                layout: MPSDataLayout.HeightxWidthxFeatureChannels,
                 size: MTLSize(width: 1, height: 1, depth: 1)) else{
                     return nil
             }
