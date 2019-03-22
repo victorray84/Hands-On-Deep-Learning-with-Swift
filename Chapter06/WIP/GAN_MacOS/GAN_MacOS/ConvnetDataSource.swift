@@ -207,7 +207,7 @@ extension ConvnetDataSource{
     private func generateBiasTerms() -> Data?{
         let weightsCount = self.outputFeatureChannels
         
-        let biasTerms = Array<Float>(repeating: 0.00001, count: weightsCount)
+        let biasTerms = Array<Float>(repeating: 0.0, count: weightsCount)
         return Data(fromArray:biasTerms)
     }
 }
@@ -247,7 +247,7 @@ extension ConvnetDataSource{
             // this should reflect the updated weights for this datasource (via a different network)
             return weightsAndBiasesState
 //            return nil
-        }
+        }        
         
 //        optimizer.encode(
 //            commandBuffer: commandBuffer,

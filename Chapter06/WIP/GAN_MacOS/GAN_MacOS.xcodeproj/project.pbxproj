@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		840CC7242244D8F30026E5E4 /* GAN+Activations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 840CC7232244D8F30026E5E4 /* GAN+Activations.swift */; };
+		840CC7262244D9A20026E5E4 /* GAN+NetworkHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 840CC7252244D9A20026E5E4 /* GAN+NetworkHelpers.swift */; };
 		8417FF38222C3B2A00BF0D50 /* Float+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8417FF37222C3B2A00BF0D50 /* Float+Extension.swift */; };
 		844B180B2222DDAA005DC471 /* GANSampleGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 844B180A2222DDAA005DC471 /* GANSampleGenerator.swift */; };
 		84C7E0F7221C9F3E00B9B9A6 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84C7E0F6221C9F3E00B9B9A6 /* main.swift */; };
@@ -37,6 +39,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		840CC7232244D8F30026E5E4 /* GAN+Activations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GAN+Activations.swift"; sourceTree = "<group>"; };
+		840CC7252244D9A20026E5E4 /* GAN+NetworkHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GAN+NetworkHelpers.swift"; sourceTree = "<group>"; };
 		8417FF37222C3B2A00BF0D50 /* Float+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Float+Extension.swift"; sourceTree = "<group>"; };
 		844B180A2222DDAA005DC471 /* GANSampleGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GANSampleGenerator.swift; sourceTree = "<group>"; };
 		84C7E0F3221C9F3E00B9B9A6 /* GAN_MacOS */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = GAN_MacOS; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -95,6 +99,8 @@
 				84C7E105221C9F8D00B9B9A6 /* MPSImage+Extension.swift */,
 				844B180A2222DDAA005DC471 /* GANSampleGenerator.swift */,
 				84C7E100221C9F8D00B9B9A6 /* GAN.swift */,
+				840CC7252244D9A20026E5E4 /* GAN+NetworkHelpers.swift */,
+				840CC7232244D8F30026E5E4 /* GAN+Activations.swift */,
 				84C7E103221C9F8D00B9B9A6 /* MTLBuffer+Extension.swift */,
 				84C7E0FE221C9F8D00B9B9A6 /* NSImage+Extension.swift */,
 				84C7E106221C9F8D00B9B9A6 /* Types.swift */,
@@ -167,10 +173,12 @@
 				84C7E107221C9F8E00B9B9A6 /* ConvnetDataSource.swift in Sources */,
 				84C7E10D221C9F8E00B9B9A6 /* MTLBuffer+Extension.swift in Sources */,
 				84C7E10A221C9F8E00B9B9A6 /* GAN.swift in Sources */,
+				840CC7242244D8F30026E5E4 /* GAN+Activations.swift in Sources */,
 				84C7E10E221C9F8E00B9B9A6 /* CGImage+Extension.swift in Sources */,
 				8417FF38222C3B2A00BF0D50 /* Float+Extension.swift in Sources */,
 				84C7E10F221C9F8E00B9B9A6 /* MPSImage+Extension.swift in Sources */,
 				84C7E118221CAC1A00B9B9A6 /* DataSource.swift in Sources */,
+				840CC7262244D9A20026E5E4 /* GAN+NetworkHelpers.swift in Sources */,
 				84C7E10B221C9F8E00B9B9A6 /* Array+Extension.swift in Sources */,
 				84C7E0F7221C9F3E00B9B9A6 /* main.swift in Sources */,
 				84C7E110221C9F8E00B9B9A6 /* Types.swift in Sources */,

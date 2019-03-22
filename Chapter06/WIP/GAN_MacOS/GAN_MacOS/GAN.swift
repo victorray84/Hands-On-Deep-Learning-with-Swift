@@ -100,8 +100,7 @@ public class GAN{
             // create discriminator for training
             self.discriminatorGraph = self.createDiscriminator(.training)
         }
-    }
-    
+    }    
 }
 
 // MARK: Inference
@@ -219,9 +218,9 @@ extension GAN{
         
         // 1. get the inputs (x and y)
         if let trueImages = dataLoader.nextBatch(),
-            let trueLabels = dataLoader.createLabels(withValue: 0.8),
+            let trueLabels = dataLoader.createLabels(withValue: 0.9),
             let falseImages = self.generateSamples(dataLoader.batchSize, syncronizeWithCPU: true),
-            let falseLabels = dataLoader.createLabels(withValue: 0.2),
+            let falseLabels = dataLoader.createLabels(withValue: 0.1),
             let commandBuffer = self.commandQueue.makeCommandBuffer() {
             
             discriminator.graph.encodeBatch(
@@ -550,330 +549,49 @@ extension GAN{
     
 }
 
-// MARK: Activation factory
+// MARK: Network builder
 
 extension GAN{
     
-    static func createRelu(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        let activation = MPSCNNNeuronReLUNode(source: x)
-        activation.resultImage.format = .float32
-        activation.label = name
-        return activation
-    }
-    
-    /*:
-     f(x) = alpha * x for x < 0, f(x) = x for x >= 0
-    */
-    static func createLeakyRelu(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        let activation = MPSCNNNeuronReLUNode(source: x, a:0.2)
-        activation.resultImage.format = .float32
-        activation.label = name
-        return activation
-    }
-    
-    static func createSigmoid(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        let activation = MPSCNNNeuronSigmoidNode(source:x)
-        //let activation = MPSCNNNeuronHardSigmoidNode(source: x, a:1.0, b:Float.leastNonzeroMagnitude)
-        activation.resultImage.format = .float32
-        activation.label = name
-        return activation
-    }
-    
-    static func createTanH(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        let activation = MPSCNNNeuronTanHNode(source: x)
-        activation.resultImage.format = .float32
-        activation.label = name
-        return activation
-    }
-    
-}
-
-// MARK: Builder functions
-
-extension GAN{
-    
-    private func makeOptimizer(learningRate:Float, momentumScale:Float) -> MPSNNOptimizerAdam?{
-//    private func makeOptimizer(learningRate:Float, momentumScale:Float) -> MPSNNOptimizerStochasticGradientDescent?{
-    
-        let optimizerDescriptor = MPSNNOptimizerDescriptor(
-            learningRate: learningRate,
-            gradientRescale: 1.0,
-            regularizationType: .None,
-            regularizationScale: 1.0)
+    func createBackwardsPass(
+        forNodes nodes:[MPSNNFilterNode],
+        usingLossType lossType:MPSCNNLossType=MPSCNNLossType.sigmoidCrossEntropy,
+        withReduction reducationType:MPSCNNReductionType=MPSCNNReductionType.mean) -> [MPSNNGradientFilterNode]{
         
-        let optimizer = MPSNNOptimizerAdam(
-            device: self.device,
-            beta1: Double(momentumScale),
-            beta2: 0.999,
-            epsilon: 1e-8,
-            timeStep: 0,
-            optimizerDescriptor: optimizerDescriptor)
-        
-//        let optimizer = MPSNNOptimizerStochasticGradientDescent(
-//            device: self.device,
-//            momentumScale: momentumScale,
-//            useNestrovMomentum: true,
-//            optimizerDescriptor: optimizerDescriptor)
-        
-        return optimizer
-    }
-    
-    private func makeMPSVector(count:Int, repeating:Float=0.0) -> MPSVector?{
-        // Create a Metal buffer
-        guard let buffer = self.device.makeBuffer(
-            bytes: Array<Float32>(repeating: repeating, count: count),
-            length: count * MemoryLayout<Float32>.size,
-            options: [.storageModeShared]) else{
-                return nil
+        guard var lastOutput = nodes.last?.resultImage else{
+            fatalError("Failed to create backwards pass")
         }
         
-        // Create a vector descriptor
-        let desc = MPSVectorDescriptor(
-            length: count, dataType: MPSDataType.float32)
+        // === Loss function ===
+        let lossDesc = MPSCNNLossDescriptor(
+            type: lossType,
+            reductionType: reducationType)
         
-        // Create a vector with descriptor
-        let vector = MPSVector(
-            buffer: buffer, descriptor: desc)
+        let loss = MPSCNNLossNode(
+            source: lastOutput,
+            lossDescriptor: lossDesc)
         
-        assert(vector.dataType == MPSDataType.float32)
+        loss.resultImage.format = .float32
+        lastOutput = loss.resultImage
         
-        return vector
-    }
-    
-    func createConvLayer(
-        name:String,
-        x:MPSNNImageNode,
-        mode:NetworkMode,
-        isTrainable:Bool,
-        kernelSize:KernelSize = KernelSize(width:5, height:5),
-        strideSize:KernelSize = KernelSize(width:2, height:2),
-        inputFeatureChannels:Int,
-        outputFeatureChannels:Int,
-        datasources:inout [ConvnetDataSource],
-        activationFunc:((MPSNNImageNode, String) -> MPSCNNNeuronNode)? = nil) -> [MPSNNFilterNode]{
+        //let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
+        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
         
-        var layers = [MPSNNFilterNode]()
-        
-        // We are sharing datasources between our networks (specifically the Discriminator + GAN,
-        // Generator + GAN - it's for this reason we cache them
-        
-        // Create an optimizer iff we are training; if this node is non-trainable then
-        // set it's learning rate to 0.0 (we still want it to pass its weights through
-        // our weightsAndBiasesState so we can avoid frequent IO writes and reads
-//        var optimizer : MPSNNOptimizerStochasticGradientDescent? = nil
-        var optimizer : MPSNNOptimizerAdam? = nil
-        
-        if mode == NetworkMode.training{
-            optimizer = self.makeOptimizer(
-                learningRate: isTrainable ? self.learningRate : 0.0,
-                momentumScale: self.momentumScale)
-        }
-        
-        let datasource = ConvnetDataSource(
-            name: name,
-            weightsPathURL:self.weightsPathURL,
-            kernelSize: kernelSize,
-            strideSize: strideSize,
-            inputFeatureChannels: inputFeatureChannels,
-            outputFeatureChannels: outputFeatureChannels,
-            optimizer: optimizer)
-        
-        datasource.trainable = isTrainable
-        
-        if mode == .training{
-            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
-                device: self.device,
-                cnnConvolutionDescriptor: datasource.descriptor())
+        // === Backwards pass ===
+        let gradientNodes = nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
+            let gradientNode = node.gradientFilter(withSource: lastOutput)
             
-            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
-                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.momentumVectors = [weightsMomentum, biasMomentum]
+            lastOutput = gradientNode.resultImage
+            lastOutput.format = .float32
+            
+            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
+                cnnGradientNode.trainingStyle = trainingStyle
             }
             
-            if let weightsVelocity = self.makeMPSVector(count: datasource.weightsLength),
-                let biasVelocity = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.velocityVectors = [weightsVelocity, biasVelocity]
-            }
+            return gradientNode
         }
         
-        datasources.append(datasource)
-        
-        let conv = MPSCNNConvolutionNode(source: x, weights: datasource)
-        conv.resultImage.format = .float32
-        conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
-        conv.label = "\(name)_conv"
-        
-        layers.append(conv)
-        
-        if let activationFunc = activationFunc{
-            let activationNode = activationFunc(layers.last!.resultImage, "\(name)_activation")
-            layers.append(activationNode)
-        }
-        
-        return layers
-    }
-    
-    func createTransposeConvLayer(
-        name:String,
-        x:MPSNNImageNode,
-        mode:NetworkMode,
-        isTrainable:Bool,
-        kernelSize:KernelSize = KernelSize(width:5, height:5),
-        strideSize:KernelSize = KernelSize(width:1, height:1),
-        inputFeatureChannels:Int,
-        outputFeatureChannels:Int,
-        datasources:inout [ConvnetDataSource],
-        upscale:Int=2,
-        activationFunc:((MPSNNImageNode, String) -> MPSCNNNeuronNode)? = nil) -> [MPSNNFilterNode]{
-        
-        var layers = [MPSNNFilterNode]()
-        
-        // upscale image
-        let upscale = MPSCNNUpsamplingNearestNode(
-            source: x,
-            integerScaleFactorX: upscale,
-            integerScaleFactorY: upscale)
-        upscale.label = "\(name)_upscale"
-        
-        layers.append(upscale)
-        
-        // We are sharing datasources between our networks (specifically the Discriminator + GAN,
-        // Generator + GAN - it's for this reason we cache them
-        
-        // Create an optimizer iff we are training; if this node is non-trainable then
-        // set it's learning rate to 0.0 (we still want it to pass its weights through
-        // our weightsAndBiasesState so we can avoid frequent IO writes and reads
-//        var optimizer : MPSNNOptimizerStochasticGradientDescent? = nil
-        var optimizer : MPSNNOptimizerAdam? = nil
-        
-        if mode == NetworkMode.training{
-            optimizer = self.makeOptimizer(
-                learningRate: isTrainable ? self.learningRate : 0.0,
-                momentumScale: self.momentumScale)
-        }
-        
-        let datasource = ConvnetDataSource(
-            name: name,
-            weightsPathURL:self.weightsPathURL,
-            kernelSize: kernelSize,
-            strideSize: strideSize,
-            inputFeatureChannels: inputFeatureChannels,
-            outputFeatureChannels: outputFeatureChannels,
-            optimizer: optimizer)
-        
-        datasource.trainable = isTrainable
-        
-        if mode == .training{
-            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
-                device: self.device,
-                cnnConvolutionDescriptor: datasource.descriptor())
-            
-            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
-                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.momentumVectors = [weightsMomentum, biasMomentum]
-            }
-            
-            if let weightsVelocity = self.makeMPSVector(count: datasource.weightsLength),
-                let biasVelocity = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.velocityVectors = [weightsVelocity, biasVelocity]
-            }
-        }
-        
-        datasources.append(datasource)
-        
-        let conv = MPSCNNConvolutionNode(source: upscale.resultImage, weights: datasource)
-        conv.resultImage.format = .float32
-        conv.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.sizeSame)
-        conv.label = "\(name)_conv"
-        
-        layers.append(conv)
-        
-        if let activationFunc = activationFunc{
-            let activationNode = activationFunc(layers.last!.resultImage, "\(name)_activation")
-            layers.append(activationNode)
-        }
-        
-        return layers
-    }
-    
-    private func createDenseLayer(
-        name:String,
-        input:MPSNNImageNode,
-        mode:NetworkMode,
-        isTrainable:Bool,
-        kernelSize:KernelSize,
-        inputFeatureChannels:Int,
-        outputFeatureChannels:Int,
-        datasources:inout [ConvnetDataSource],
-        activationFunc:((MPSNNImageNode, String) -> MPSCNNNeuronNode)? = nil) -> [MPSNNFilterNode]{
-        
-        var layers = [MPSNNFilterNode]()
-        
-        // We are sharing datasources between our networks (specifically the Discriminator + GAN,
-        // Generator + GAN - it's for this reason we cache them
-        
-        // Create an optimizer iff we are training; if this node is non-trainable then
-        // set it's learning rate to 0.0 (we still want it to pass its weights through
-        // our weightsAndBiasesState so we can avoid frequent IO writes and reads
-//        var optimizer : MPSNNOptimizerStochasticGradientDescent? = nil
-        var optimizer : MPSNNOptimizerAdam? = nil
-        
-        if mode == NetworkMode.training{
-            optimizer = self.makeOptimizer(
-                learningRate: isTrainable ? self.learningRate : 0.0,
-                momentumScale: self.momentumScale)
-        }
-        
-        let datasource = ConvnetDataSource(
-            name: name,
-            weightsPathURL: self.weightsPathURL,
-            kernelSize: kernelSize,
-            inputFeatureChannels: inputFeatureChannels,
-            outputFeatureChannels: outputFeatureChannels,
-            optimizer:optimizer)
-        
-        datasource.trainable = isTrainable
-        
-        if mode == .training{
-            datasource.weightsAndBiasesState = MPSCNNConvolutionWeightsAndBiasesState(
-                device: self.device,
-                cnnConvolutionDescriptor: datasource.descriptor())
-            
-            if let weightsMomentum = self.makeMPSVector(count: datasource.weightsLength),
-                let biasMomentum = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.momentumVectors = [weightsMomentum, biasMomentum]
-            }
-            
-            if let weightsVelocity = self.makeMPSVector(count: datasource.weightsLength),
-                let biasVelocity = self.makeMPSVector(count: datasource.biasTermsLength){
-                
-                datasource.velocityVectors = [weightsVelocity, biasVelocity]
-            }
-        }
-        
-        datasources.append(datasource)
-        
-        let fc = MPSCNNFullyConnectedNode(
-            source: input,
-            weights: datasource)
-        
-        fc.resultImage.format = .float32
-        fc.paddingPolicy = MPSNNDefaultPadding(method: MPSNNPaddingMethod.validOnly)
-        fc.label = "\(name)_fc"
-        
-        layers.append(fc)
-        
-        if let activationFunc = activationFunc{
-            let activationNode = activationFunc(layers.last!.resultImage, "\(name)_activation")
-            layers.append(activationNode)
-        }
-        
-        return layers
+        return gradientNodes
     }
 }
 
@@ -881,11 +599,10 @@ extension GAN{
 
 extension GAN{
     
-    func createDiscriminatorForwardPassNodes(
+    func createDiscriminatorForwardPass(
         x:MPSNNImageNode? = nil,
         inputShape:Shape?=nil,
-        mode:NetworkMode=NetworkMode.training,
-        isTrainable:Bool=true) -> (nodes:[MPSNNFilterNode], datasources:[ConvnetDataSource]){
+        mode:NetworkMode=NetworkMode.training) -> (nodes:[MPSNNFilterNode], datasources:[ConvnetDataSource]){
         
         var nodes = [MPSNNFilterNode]()
         var datasources = [ConvnetDataSource]()
@@ -900,7 +617,6 @@ extension GAN{
             name: "d_conv_1",
             x: lastOutput, // 28x28x1
             mode:mode,
-            isTrainable: isTrainable,
             kernelSize: KernelSize(width:5, height:5),
             strideSize: StrideSize(width:2, height:2),
             inputFeatureChannels: inputShape.channels,
@@ -915,7 +631,6 @@ extension GAN{
             name: "d_conv_2",
             x: lastOutput, // 14x14x64
             mode:mode,
-            isTrainable: isTrainable,
             kernelSize: KernelSize(width:5, height:5),
             strideSize: StrideSize(width:2, height:2),
             inputFeatureChannels: 64,
@@ -930,7 +645,6 @@ extension GAN{
             name: "d_dense_1",
             input: lastOutput, // 7x7x128
             mode:mode,
-            isTrainable: isTrainable,
             kernelSize: KernelSize(width:7, height:7),
             inputFeatureChannels: 128,
             outputFeatureChannels: 256,
@@ -944,7 +658,6 @@ extension GAN{
             name: "d_dense_2",
             input: lastOutput,// 1x1x256
             mode:mode,
-            isTrainable: isTrainable,
             kernelSize: KernelSize(width:1, height:1),
             inputFeatureChannels: 256,
             outputFeatureChannels: 1,
@@ -970,19 +683,15 @@ extension GAN{
                 depth: 1))
         
         // Create the forward pass
-        let (nodes, datasources) = createDiscriminatorForwardPassNodes(
+        let (nodes, datasources) = createDiscriminatorForwardPass(
             x:scale.resultImage,
             inputShape:self.inputShape,
-            mode:mode,
-            isTrainable: mode == .training ? true : false)
-        
-        // Obtain reference to the last node 
-        var lastOutput = nodes.last!.resultImage
+            mode:mode)
         
         if mode == .inference{
             guard let mpsGraph = MPSNNGraph(
                 device: self.device,
-                resultImage: lastOutput,
+                resultImage: nodes.last!.resultImage,
                 resultImageIsNeeded: true) else{
                     return nil
             }
@@ -990,38 +699,12 @@ extension GAN{
             return Graph(mpsGraph, datasources, mode)
         }
         
-        // === Loss function ===
-        let lossDesc = MPSCNNLossDescriptor(
-            type: MPSCNNLossType.sigmoidCrossEntropy,
-            reductionType: MPSCNNReductionType.mean)
-        
-        let loss = MPSCNNLossNode(
-            source: lastOutput,
-            lossDescriptor: lossDesc)
-        
-        loss.resultImage.format = .float32
-        lastOutput = loss.resultImage
-        
-        //let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
-        let trainingStyle = MPSNNTrainingStyle.updateDeviceGPU
-        
-        // === Backwards pass ===
-        let _ = nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
-            let gradientNode = node.gradientFilter(withSource: lastOutput)
-            
-            lastOutput = gradientNode.resultImage
-            lastOutput.format = .float32
-            
-            if let cnnGradientNode = gradientNode as? MPSCNNConvolutionGradientNode{
-                cnnGradientNode.trainingStyle = trainingStyle
-            }
-            
-            return gradientNode
-        }
+        // (If training) create backward pass
+        let gradientNodes = self.createBackwardsPass(forNodes: nodes)
         
         guard let mpsGraph = MPSNNGraph(
             device: self.device,
-            resultImage: lastOutput,
+            resultImage: gradientNodes.last!.resultImage,
             resultImageIsNeeded: false) else{
                 return nil
         }
@@ -1036,27 +719,24 @@ extension GAN{
 
 extension GAN{
     
-    func createGenerator(_ mode:NetworkMode) -> Graph?{
+    func createGeneratorForwardPass(
+        x:MPSNNImageNode? = nil,
+        mode:NetworkMode=NetworkMode.training) -> (nodes:[MPSNNFilterNode], datasources:[ConvnetDataSource]){
         guard #available(OSX 10.14.1, *) else {
-            return nil
+            fatalError("Requires OSX 10.14.1")
         }
         
+        var nodes = [MPSNNFilterNode]()
         var datasources = [ConvnetDataSource]()
         
-        var nodes = [MPSNNFilterNode]()
-        
-        // Input placeholder
-        let input = MPSNNImageNode(handle: nil)
-        
         // keep track of the last input
-        var lastOutput : MPSNNImageNode = input
+        var lastOutput : MPSNNImageNode = x ?? MPSNNImageNode(handle: nil)
         
-        // Dense layers
+        // === Forward pass ===
         let layer1 = self.createDenseLayer(
             name: "g_dense_1",
             input: lastOutput,
             mode:mode,
-            isTrainable: mode == .training ? true : false,
             kernelSize: KernelSize(width:self.latentSize, height:1),
             inputFeatureChannels: 1,
             outputFeatureChannels: 7 * 7 * 128,
@@ -1081,7 +761,6 @@ extension GAN{
             name: "g_conv_1",
             x: lastOutput,
             mode:mode,
-            isTrainable: mode == .training ? true : false,
             kernelSize:KernelSize(width:5, height:5),
             strideSize:StrideSize(width:1, height:1),
             inputFeatureChannels: 128,
@@ -1097,7 +776,6 @@ extension GAN{
             name: "g_conv_2",
             x: lastOutput,
             mode:mode,
-            isTrainable: mode == .training ? true : false,
             kernelSize:KernelSize(width:5, height:5),
             strideSize:StrideSize(width:1, height:1),
             inputFeatureChannels: 64,
@@ -1109,59 +787,52 @@ extension GAN{
         lastOutput = layer3.last!.resultImage
         nodes += layer3
         
+        return (nodes:nodes, datasources:datasources)
+    }
+    
+    func createGenerator(_ mode:NetworkMode) -> Graph?{
+        guard #available(OSX 10.14.1, *) else {
+            return nil
+        }
+        
+        // Input placeholder
+        let input = MPSNNImageNode(handle: nil)
+        
+        // Create forward pass for our generator network
+        var (nodes, datasources) = self.createGeneratorForwardPass(x: input, mode: mode)
+        
         if mode == .inference{
             guard let mpsGraph = MPSNNGraph(
                 device: self.device,
-                resultImage: lastOutput,
+                resultImage: nodes.last!.resultImage,
                 resultImageIsNeeded: true) else{
                     return nil
             }
+            
+            mpsGraph.format = .float32
             
             return Graph(mpsGraph, datasources, mode)
         }
         
         // Let's now attach the discriminator to our generator network
-        let (discriminatorNodes, discriminatorDatasources) = self.createDiscriminatorForwardPassNodes(
-            x:lastOutput,
+        let (discriminatorNodes, discriminatorDatasources) = self.createDiscriminatorForwardPass(
+            x:nodes.last!.resultImage,
             inputShape:self.inputShape,
-            mode:mode,
-            isTrainable:false)
+            mode:mode)
         
-//        discriminatorDatasources.forEach { (ds) in
-//            ds.trainable = false
-//            datasources.append(ds)
-//        }
+        discriminatorDatasources.forEach { (ds) in
+            ds.trainable = false
+            datasources.append(ds)
+        }
         
         nodes += discriminatorNodes
         
-        lastOutput = discriminatorNodes.last!.resultImage
-        
-        // === Loss function ===
-        let lossDesc = MPSCNNLossDescriptor(
-            type: MPSCNNLossType.sigmoidCrossEntropy,
-            reductionType: MPSCNNReductionType.mean)
-        
-        let loss = MPSCNNLossNode(
-            source: lastOutput,
-            lossDescriptor: lossDesc)
-        
-        loss.resultImage.format = .float32
-        
-        lastOutput = loss.resultImage
-        
-        // === Backwards pass ===
-        let _ = nodes.reversed().map { (node) -> MPSNNGradientFilterNode in
-            let gradientNode = node.gradientFilter(withSource: lastOutput)
-            
-            lastOutput = gradientNode.resultImage
-            lastOutput.format = .float32
-            
-            return gradientNode
-        }
+        // Create backward pass
+        let gradientNodes = self.createBackwardsPass(forNodes: nodes)
         
         guard let mpsGraph = MPSNNGraph(
             device: self.device,
-            resultImage: lastOutput,
+            resultImage: gradientNodes.last!.resultImage,
             resultImageIsNeeded: false) else{
                 return nil
         }

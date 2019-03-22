@@ -75,7 +75,7 @@ public class DataLoader{
     
     public init?(device:MTLDevice,
                  imagesURL:URL,
-                 batchSize:Int=32){
+                 batchSize:Int=8){
         
         self.device = device
         self.batchSize = batchSize               
