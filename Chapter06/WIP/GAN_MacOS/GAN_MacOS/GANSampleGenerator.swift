@@ -1,8 +1,8 @@
 //
-//  GANSampleGenerator.swift
-//  GAN_MacOS
+//  GANSampleGenerator
+//  Hands-On Deep Learning with Swift - GAN
 //
-//  Created by joshua.newnham on 24/02/2019.
+//  Created by joshua.newnham on 19/02/2019.
 //  Copyright © 2019 Joshua Newnham. All rights reserved.
 //
 

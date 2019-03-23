@@ -1,3 +1,11 @@
+//
+//  DataLoader.swift
+//  Hands-On Deep Learning with Swift - GAN
+//
+//  Created by joshua.newnham on 19/02/2019.
+//  Copyright © 2019 Joshua Newnham. All rights reserved.
+//
+
 import AppKit
 import MetalKit
 import MetalPerformanceShaders
@@ -278,8 +286,8 @@ extension DataLoader{
             
             guard let labelDesc = MPSCNNLossDataDescriptor(
                 data: labelData,
-                layout: MPSDataLayout.featureChannelsxHeightxWidth,
-//                layout: MPSDataLayout.HeightxWidthxFeatureChannels,
+//                layout: MPSDataLayout.featureChannelsxHeightxWidth,
+                layout: MPSDataLayout.HeightxWidthxFeatureChannels,
                 size: MTLSize(width: 1, height: 1, depth: 1)) else{
                     return nil
             }

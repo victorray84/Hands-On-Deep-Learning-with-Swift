@@ -1,3 +1,11 @@
+//
+//  Types.swift
+//  Hands-On Deep Learning with Swift - GAN
+//
+//  Created by joshua.newnham on 22/03/2019.
+//  Copyright © 2019 Joshua Newnham. All rights reserved.
+//
+
 import AppKit
 import MetalKit
 import MetalPerformanceShaders

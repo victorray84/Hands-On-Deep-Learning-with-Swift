@@ -1,3 +1,11 @@
+//
+//  Array+Extension.swift
+//  Hands-On Deep Learning with Swift - GAN
+//
+//  Created by joshua.newnham on 19/02/2019.
+//  Copyright © 2019 Joshua Newnham. All rights reserved.
+//
+
 import Foundation
 import Accelerate
 

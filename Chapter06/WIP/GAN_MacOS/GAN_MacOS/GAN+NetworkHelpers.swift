@@ -1,6 +1,6 @@
 //
 //  GAN+NetworkHelpers.swift
-//  GAN_MacOS
+//  Hands-On Deep Learning with Swift - GAN
 //
 //  Created by joshua.newnham on 22/03/2019.
 //  Copyright © 2019 Joshua Newnham. All rights reserved.
@@ -15,7 +15,6 @@ import CoreGraphics
 extension GAN{
     
     func makeOptimizer(learningRate:Float, momentumScale:Float) -> MPSNNOptimizerAdam?{
-        //    private func makeOptimizer(learningRate:Float, momentumScale:Float) -> MPSNNOptimizerStochasticGradientDescent?{
         
         let optimizerDescriptor = MPSNNOptimizerDescriptor(
             learningRate: learningRate,
@@ -30,12 +29,6 @@ extension GAN{
             epsilon: 1e-8,
             timeStep: 0,
             optimizerDescriptor: optimizerDescriptor)
-        
-        //        let optimizer = MPSNNOptimizerStochasticGradientDescent(
-        //            device: self.device,
-        //            momentumScale: momentumScale,
-        //            useNestrovMomentum: true,
-        //            optimizerDescriptor: optimizerDescriptor)
         
         return optimizer
     }
@@ -76,7 +69,6 @@ extension GAN{
         var layers = [MPSNNFilterNode]()
         
         // Create an optimizer iff we are training
-//        var optimizer : MPSNNOptimizerStochasticGradientDescent? = nil
         var optimizer : MPSNNOptimizerAdam? = nil
         
         if mode == NetworkMode.training{
@@ -153,7 +145,6 @@ extension GAN{
         layers.append(upscale)
         
         // Create an optimizer iff we are training;
-//        var optimizer : MPSNNOptimizerStochasticGradientDescent? = nil
         var optimizer : MPSNNOptimizerAdam? = nil
         
         if mode == NetworkMode.training{

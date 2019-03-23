@@ -1,6 +1,6 @@
 //
 //  GAN+Activations.swift
-//  GAN_MacOS
+//  Hands-On Deep Learning with Swift - GAN
 //
 //  Created by joshua.newnham on 22/03/2019.
 //  Copyright © 2019 Joshua Newnham. All rights reserved.
@@ -32,8 +32,7 @@ extension GAN{
     }
     
     static func createSigmoid(_ x:MPSNNImageNode, _ name:String) -> MPSCNNNeuronNode{
-        let activation = MPSCNNNeuronSigmoidNode(source:x)
-        //let activation = MPSCNNNeuronHardSigmoidNode(source: x, a:1.0, b:Float.leastNonzeroMagnitude)
+        let activation = MPSCNNNeuronSigmoidNode(source:x)        
         activation.resultImage.format = .float32
         activation.label = name
         return activation

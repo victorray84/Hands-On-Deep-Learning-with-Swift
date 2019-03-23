@@ -1,6 +1,6 @@
 //
 //  Float+Extension.swift
-//  GAN_MacOS
+//  Hands-On Deep Learning with Swift - GAN
 //
 //  Created by joshua.newnham on 03/03/2019.
 //  Copyright © 2019 Joshua Newnham. All rights reserved.
@@ -20,15 +20,6 @@ extension Float{
         // Convert z1 from the Standard Normal Distribution to our Normal Distribution
         return z1 * std + mean
     }
-    
-    //    public static func randomNormal(mean:Float, std:Float) -> Float{
-    //        let r2 = -2.0 * log(Double.random(in: 0...1))
-    //        let theta = 2.0 * Double.pi * Double.random(in: 0...1)
-    //
-    //        let rand = (sqrt(r2) * cos(theta)) + Double(mean)
-    //
-    //        return Float(rand)
-    //    }
     
     public static func randomNormal(mean:Float, deviation:Float, randomSource:GKRandomSource?=nil) -> Float{
         guard deviation > 0 else { return mean }

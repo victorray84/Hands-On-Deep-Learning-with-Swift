@@ -1,3 +1,11 @@
+//
+//  GAN.swift
+//  Hands-On Deep Learning with Swift - GAN
+//
+//  Created by joshua.newnham on 19/02/2019.
+//  Copyright © 2019 Joshua Newnham. All rights reserved.
+//
+
 import Foundation
 import AppKit
 import MetalKit
@@ -46,6 +54,7 @@ public class GAN{
     private var discriminatorGraph : Graph?
     
     private var generatorGraph : Graph?
+    
     private var adversarialGraph : Graph?
     
     private var sampleGenerator : GANSampleGenerator
@@ -84,7 +93,7 @@ public class GAN{
         self.learningRate = learningRate
         self.momentumScale = momentumScale
         
-        self.sampleGenerator = GANSampleGenerator(self.device, self.latentSize)
+        self.sampleGenerator = PooledGANSampleGenerator(self.device, self.latentSize)
         
         // Create generator (for inference)
         self.generatorGraph = self.createGenerator(.inference)
@@ -95,10 +104,11 @@ public class GAN{
             // if training then ...
             // create a generator network for training (including the backprop)
             self.adversarialGraph = self.createGenerator(.training)
-            //print(self.adversarialGraph!.graph.debugDescription)
-            
             // create discriminator for training
             self.discriminatorGraph = self.createDiscriminator(.training)
+        } else{
+            // create discriminator for inference
+            self.discriminatorGraph = self.createDiscriminator(.inference)
         }
     }    
 }
@@ -107,7 +117,7 @@ public class GAN{
 
 extension GAN{
     
-    public func generateSamples(_ batchCount:Int, syncronizeWithCPU:Bool=false) -> [MPSImage]?{
+    public func generate(_ batchCount:Int, syncronizeWithCPU:Bool=false) -> [MPSImage]?{
         guard let commandBuffer = self.commandQueue.makeCommandBuffer(),
             let generator = self.generatorGraph else{
             return nil
@@ -132,6 +142,38 @@ extension GAN{
         commandBuffer.waitUntilCompleted()
         
         return samples
+    }
+    
+    public func predict(_ x : [MPSImage]) -> [Float]?{
+        guard let discriminator = self.discriminatorGraph,
+            let commandBuffer = self.commandQueue.makeCommandBuffer() else{
+                return nil
+        }
+        
+        if let outputs = discriminator.graph.encodeBatch(
+            to: commandBuffer,
+            sourceImages:[x],
+            sourceStates: nil){
+            
+            outputs.forEach({ (output) in
+                output.synchronize(on: commandBuffer)
+            })
+            
+            commandBuffer.commit()
+            commandBuffer.waitUntilCompleted()
+            
+            // Process outputs
+            let predictions = outputs.map({ (output) -> Float in
+                if let prediction = output.toFloatArray(){
+                    return prediction[0]
+                }
+                return -1.0
+            })
+            
+            return predictions
+        }
+        
+        return nil
     }
 }
 
@@ -160,6 +202,7 @@ extension GAN{
                         discriminatorLoss += loss.discriminatorLoss
                         adversarialLoss += loss.adversarialLoss
                         
+                        // Print the loss for every 5 training steps
                         if Int(trainingSteps) % 5 == 0{
                             print("... discriminatorLoss \(discriminatorLoss/trainingSteps), adversarialLoss \(adversarialLoss/trainingSteps)")
                         }
@@ -171,26 +214,18 @@ extension GAN{
             discriminatorLoss /= trainingSteps
             adversarialLoss /= trainingSteps
             
-            // DEV
-//            inspectDatasources(d:self.discriminatorGraph!.datasources,
-//                               g:self.generatorGraph!.datasources,
-//                               a:self.adversarialGraph!.datasources)
-            
-            // Generate sample images every n epochs
             print("Finished epoch \(epoch); discriminator loss \(discriminatorLoss), adversarial loss \(adversarialLoss)")
             
-            if epoch == 1 || epoch == epochs || epoch % 5 == 0 || true{
+            // Save weights [and generate sample images] every other epoch
+            if epoch == 1 || epoch == epochs || epoch % 2 == 0{
                 updateDatasources(self.discriminatorGraph!.datasources)
                 updateDatasources(self.adversarialGraph!.datasources)
                 
-                // Reload weights
-                self.generatorGraph?.graph.reloadFromDataSources()
-                
-                self.generateImages(dataLoader.batchSize, forEpoch:epoch, withDataLoader: dataLoader)
-                
-                // DEVELOPMENT
-                autoreleasepool { () -> Void in
-                    testDiscriminator(dataLoader:dataLoader)
+                if self.exportImagesURL != nil{
+                    // Reload weights
+                    self.generatorGraph?.graph.reloadFromDataSources()
+                    
+                    self.generateImages(dataLoader.batchSize, forEpoch:epoch, withDataLoader: dataLoader)
                 }
             }
         }
@@ -219,7 +254,7 @@ extension GAN{
         // 1. get the inputs (x and y)
         if let trueImages = dataLoader.nextBatch(),
             let trueLabels = dataLoader.createLabels(withValue: 0.9),
-            let falseImages = self.generateSamples(dataLoader.batchSize, syncronizeWithCPU: true),
+            let falseImages = self.generate(dataLoader.batchSize, syncronizeWithCPU: true),
             let falseLabels = dataLoader.createLabels(withValue: 0.1),
             let commandBuffer = self.commandQueue.makeCommandBuffer() {
             
@@ -233,10 +268,6 @@ extension GAN{
             // to return to the caller
             for label in trueLabels + falseLabels{
                 label.synchronize(on: commandBuffer)
-            }
-            
-            for ds in discriminator.datasources{
-                //ds.synchronizeParameters(on: commandBuffer)
             }
             
             commandBuffer.commit()
@@ -257,11 +288,8 @@ extension GAN{
             datasources: discriminator.datasources,
             toDatasources: adversarial.datasources)
         
-//        updateDatasources(discriminator.datasources)
-//        adversarial.graph.reloadFromDataSources()
-        
         // Train the generative adversarial network (aka adversarial)
-        for _ in 0..<2{
+        for _ in 0..<1{
             if let commandBuffer = self.commandQueue.makeCommandBuffer(){
                 
                 if let x = self.sampleGenerator.generate(dataLoader.batchSize),
@@ -273,12 +301,6 @@ extension GAN{
                         sourceStates: [y],
                         intermediateImages: nil,
                         destinationStates: nil)
-                    
-                    // Syncronoise the weights so they are available to the generator network
-                    // TODO: Check this is needed
-                    for ds in adversarial.datasources.filter( { $0.trainable } ){
-                        //ds.synchronizeParameters(on: commandBuffer)
-                    }
                     
                     // Syncronise the loss labels so we can get access to them
                     // to return to the caller
@@ -341,7 +363,7 @@ extension GAN{
     }
     
     func generateImages(_ sampleCount:Int, forEpoch epoch:Int, withDataLoader dataLoader:DataLoader){
-        guard let generatedImages = self.generateSamples(sampleCount, syncronizeWithCPU: true),
+        guard let generatedImages = self.generate(sampleCount, syncronizeWithCPU: true),
             let exportURL = self.exportImagesURL else{
                 return
         }
@@ -400,12 +422,11 @@ extension GAN{
         dataLoader.reset()
         
         if let trueImages = dataLoader.nextBatch(),
-            let falseImages = self.generateSamples(dataLoader.batchSize, syncronizeWithCPU: true){
-            //let falseImages = dataLoader.createDummyInput(withValue: 0.0, count: dataLoader.batchSize){
+            let falseImages = self.generate(dataLoader.batchSize, syncronizeWithCPU: true){
             
             for image in trueImages{
-                let array = image.toFloatArray()
-                let tex = image.texture
+//                let array = image.toFloatArray()
+//                let tex = image.texture
                 
                 if let nsImage = dataLoader.toNSImage(mpsImage: image){
                     let _ = nsImage
@@ -413,8 +434,8 @@ extension GAN{
             }
             
             for image in falseImages{
-                let array = image.toFloatArray()
-                let tex = image.texture
+//                let array = image.toFloatArray()
+//                let tex = image.texture
 
                 if let nsImage = dataLoader.toNSImage(mpsImage: image){
                     let _ = nsImage
@@ -435,8 +456,6 @@ extension GAN{
                 
                 // Process outputs
                 if let outputs = outputs{
-//                    let array = outputs[0].toFloatArray()
-                    
                     let predictions = outputs.map({ (output) -> Float in
                         if let probs = output.toFloatArray(){
                             return probs[0]
@@ -489,64 +508,6 @@ extension GAN{
         return (accuracy, trueAccuracy, falseAccuracy)
         
     }
-    
-    func inspectDatasources(d:[DataSource], g:[DataSource], a:[DataSource]){
-        guard let commandBuffer = self.commandQueue.makeCommandBuffer() else{
-            return
-        }
-        
-        for datasource in g{
-            datasource.synchronizeParameters(on: commandBuffer)
-        }
-        
-        let generator_g_conv_2 = g.first { (ds) -> Bool in
-            return ds.name == "g_conv_2"
-        }
-        
-        for var datasource in a{
-            let trainable = datasource.trainable
-            datasource.trainable = true
-            datasource.synchronizeParameters(on: commandBuffer)
-            datasource.trainable = trainable
-        }
-        
-        let adversarial_g_conv_2 = a.first { (ds) -> Bool in
-            return ds.name == "g_conv_2"
-        }
-        
-        let adversarial_d_dense_1 = a.first { (ds) -> Bool in
-            return ds.name == "d_dense_1"
-        }
-        
-        for datasource in d{
-            datasource.synchronizeParameters(on: commandBuffer)
-        }
-        
-        let discriminator_d_dense_1 = d.first { (ds) -> Bool in
-            return ds.name == "d_dense_1"
-        }
-        
-        let discriminator_d_conv_2 = d.first { (ds) -> Bool in
-            return ds.name == "d_conv_2"
-        }
-        
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-        
-        // compare adversarial_d_dense_1 and discriminator_d_dense_1
-        if let adversarial_d_dense_1 = adversarial_d_dense_1,
-               let discriminator_d_dense_1 = discriminator_d_dense_1 {
-            
-            print("adversarial_d_dense_1")
-            let weightsDataA = adversarial_d_dense_1.weightsAndBiasesState!.weights.toArray(type: Float.self)
-            print(weightsDataA[20...40])
-            
-            print("discriminator_d_dense_1")
-            let weightsDataB = discriminator_d_dense_1.weightsAndBiasesState!.weights.toArray(type: Float.self)
-            print(weightsDataB[20...40])
-        }
-    }
-    
 }
 
 // MARK: Network builder

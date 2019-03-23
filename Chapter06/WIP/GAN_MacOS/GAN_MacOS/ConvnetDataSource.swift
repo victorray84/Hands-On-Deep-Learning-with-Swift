@@ -1,3 +1,11 @@
+//
+//  ConvnetDataSource.swift
+//  Hands-On Deep Learning with Swift - GAN
+//
+//  Created by joshua.newnham on 19/02/2019.
+//  Copyright © 2019 Joshua Newnham. All rights reserved.
+//
+
 import Foundation
 import AppKit
 import MetalKit
@@ -19,7 +27,6 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     var trainable : Bool = true
     
     var optimizer : MPSNNOptimizerAdam?
-//    var optimizer : MPSNNOptimizerStochasticGradientDescent?
     
     var weightsAndBiasesState : MPSCNNConvolutionWeightsAndBiasesState?
     
@@ -52,7 +59,6 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
          strideSize:KernelSize=(width:1, height:1),
          inputFeatureChannels:Int, outputFeatureChannels:Int,
          optimizer:MPSNNOptimizerAdam? = nil,
-//         optimizer:MPSNNOptimizerStochasticGradientDescent? = nil,
          useBias:Bool = true){
         
         self.name = name
@@ -87,11 +93,15 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
     }
     
     public func purge() {
+        print("\(self.name).purge")
         self.weightsData = nil
         self.biasTermsData = nil
     }
     
     public func weights() -> UnsafeMutableRawPointer{
+        if self.name == "g_dense_1"{
+            print("g_dense_1.weights")
+        }
         return UnsafeMutableRawPointer(mutating: (self.weightsData! as NSData).bytes)
     }
     
@@ -126,6 +136,10 @@ public class ConvnetDataSource : NSObject, MPSCNNConvolutionDataSource, DataSour
 extension ConvnetDataSource{
     
     public func load() -> Bool {
+        if self.name == "g_dense_1"{
+            print("g_dense_1.load")
+        }
+        
         self.weightsData = self.loadWeights()
         self.biasTermsData = self.loadBiasTerms()
         
@@ -246,15 +260,7 @@ extension ConvnetDataSource{
 
             // this should reflect the updated weights for this datasource (via a different network)
             return weightsAndBiasesState
-//            return nil
-        }        
-        
-//        optimizer.encode(
-//            commandBuffer: commandBuffer,
-//            convolutionGradientState: gradientState,
-//            convolutionSourceState: sourceState,
-//            inputMomentumVectors: self.momentumVectors,
-//            resultState: weightsAndBiasesState)
+        }
         
         optimizer.encode(
             commandBuffer: commandBuffer,
